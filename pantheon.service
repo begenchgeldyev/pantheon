@@ -1,0 +1,51 @@
+[Unit]
+Description=Pantheon — Telegram gateway to OpenClaw
+# Start after the network is actually up (Telegram long polling needs it).
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+
+# Run as a non-root user that owns the project directory. Adjust to match your VPS.
+User=pantheon
+Group=pantheon
+
+# Absolute path to the project checkout.
+WorkingDirectory=/opt/pantheon
+
+# Absolute path to the Bun binary. Find it on the VPS with:  which bun
+# (e.g. /home/pantheon/.bun/bin/bun or /usr/local/bin/bun) and set it here.
+ExecStart=/usr/local/bin/bun run src/index.ts
+
+# Configuration is loaded from this file (contains the bot token). Keep it
+# readable only by the service user:  chmod 600 /opt/pantheon/.env
+EnvironmentFile=/opt/pantheon/.env
+
+# Restart automatically after unexpected failures, with a small backoff.
+Restart=on-failure
+RestartSec=3
+
+# Send SIGTERM on stop so Pantheon can shut down grammY cleanly.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Logs go to the journal (structured JSON lines from Pantheon).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pantheon
+
+# --- Basic hardening ---
+# NoNewPrivileges is always safe. The stricter options below are commented out
+# because Pantheon spawns the `openclaw` CLI, which may need to reach the local
+# OpenClaw Gateway (e.g. a socket under /tmp) or read/write its own state under
+# the home directory. Enable them one at a time and confirm OpenClaw still works
+# before committing to them.
+NoNewPrivileges=true
+# ProtectSystem=strict
+# ProtectHome=read-only
+# PrivateTmp=true
+# ReadWritePaths=/opt/pantheon
+
+[Install]
+WantedBy=multi-user.target
