@@ -11,7 +11,7 @@
 
 import type { Config } from "./config";
 import type { OpenClawClient, SendMessageInput } from "./types";
-import { log } from "./logger";
+import { logger } from "./logger/logger";
 
 export class OpenClawError extends Error {
   override name = "OpenClawError";
@@ -160,7 +160,7 @@ export function createOpenClawClient(config: Config): OpenClawClient {
 
     if (proc.exitCode !== 0) {
       // stderr may contain useful diagnostics; log server-side only.
-      log.error("openclaw exited non-zero", {
+      logger.error("openclaw exited non-zero", {
         agentId: input.agentId,
         exitCode: proc.exitCode,
         stderr: stderr.slice(0, 500),
