@@ -66,6 +66,22 @@ export function extractResponseText(raw: string): string {
           const value = innerObj[key];
           if (typeof value === "string" && value.length > 0) return value;
         }
+
+        // OpenClaw shape: result.payloads[0].text
+        const payloads = innerObj.payloads;
+        if (Array.isArray(payloads)) {
+          const chunks: string[] = [];
+          for (const p of payloads) {
+            const t = (p as Record<string, unknown> | null)?.text;
+            if (typeof t === "string" && t.length > 0) chunks.push(t);
+          }
+          if (chunks.length > 0) return chunks.join("\n\n");
+        }
+
+        // Fallback: result.meta.finalAssistantVisibleText
+        const meta = innerObj.meta as Record<string, unknown> | undefined;
+        const visible = meta?.finalAssistantVisibleText;
+        if (typeof visible === "string" && visible.length > 0) return visible;
       }
     }
 
