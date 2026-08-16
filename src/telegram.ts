@@ -33,6 +33,7 @@ export function markdownToHtml(source: string): string {
   return html
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<li>/gi, "• ")
+    .replace(/<(p|div|h[1-6]|ul|ol|tr|thead|tbody|table)(\s[^>]*)?>/gi, "")
     .replace(/<\/(p|div|h[1-6]|li|ul|ol|tr|thead|tbody|table)>/gi, "\n")
     .replace(/<\/?([a-z0-9]+)([^>]*)>/gi, (m, rawTag: string, attrs: string) => {
       const closing = m.startsWith("</");
