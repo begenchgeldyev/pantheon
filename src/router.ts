@@ -14,6 +14,7 @@
 // place to swap in persistence.
 
 import type { Config } from "./config";
+import type { Logger } from "./logger/logger";
 import type { OpenClawClient } from "./types";
 
 export type RouteRequest = {
@@ -35,6 +36,7 @@ export class Router {
   constructor(
     private readonly client: OpenClawClient,
     private readonly config: Config,
+    private readonly logger: Logger,
   ) {}
 
   listAgents(): string[] {
@@ -67,6 +69,7 @@ export class Router {
   async route(req: RouteRequest): Promise<RouteResult> {
     const agentId = req.overrideAgent ?? this.getSelectedAgent(req.chatId);
     const sessionKey = this.buildSessionKey(req.userId, req.chatId);
+    this.logger.debug("router dispatch", { agentId, sessionKey });
     const reply = await this.client.sendMessage({
       agentId,
       message: req.text,

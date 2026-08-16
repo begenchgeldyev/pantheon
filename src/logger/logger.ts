@@ -34,5 +34,3 @@ export class Logger {
     this.write('error', message, fields);
   }
 }
-
-export const logger = new Logger(new ConsoleTransport(), 'info');

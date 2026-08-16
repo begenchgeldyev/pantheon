@@ -1,2 +1,2 @@
-export { logger } from './logger';
+export { Logger } from './logger';
 export type { LoggerSeverity, LoggerTransport, Fields } from './logger.type';

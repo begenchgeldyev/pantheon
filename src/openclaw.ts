@@ -10,8 +10,8 @@
 // so it cannot be interpreted as flags, redirection, or additional commands.
 
 import type { Config } from "./config";
+import type { Logger } from "./logger/logger";
 import type { OpenClawClient, SendMessageInput } from "./types";
-import { logger } from "./logger/logger";
 
 export class OpenClawError extends Error {
   override name = "OpenClawError";
@@ -109,7 +109,7 @@ async function readStream(stream: ReadableStream<Uint8Array> | undefined): Promi
   return await new Response(stream).text();
 }
 
-export function createOpenClawClient(config: Config): OpenClawClient {
+export function createOpenClawClient(config: Config, logger: Logger): OpenClawClient {
   const timeoutSeconds = Math.ceil(config.openclawTimeoutMs / 1000);
 
   async function sendMessage(input: SendMessageInput): Promise<string> {

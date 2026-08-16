@@ -8,8 +8,8 @@
 import { Bot, type Context } from "grammy";
 import telegramifyMarkdown from "telegramify-markdown";
 import type { Config } from "./config";
+import type { Logger } from "./logger/logger";
 import type { Router } from "./router";
-import { logger } from "./logger/logger";
 
 // Telegram hard limit is 4096 chars; stay just under for safety.
 const TELEGRAM_MAX = 4000;
@@ -56,7 +56,7 @@ export function splitMessage(text: string, max = TELEGRAM_MAX): string[] {
  * rejects the HTML (rare, but possible if the converter emits something
  * invalid), fall back to plain text so the user still gets the reply.
  */
-async function sendReply(ctx: Context, source: string): Promise<void> {
+async function sendReply(ctx: Context, source: string, logger: Logger): Promise<void> {
   for (const chunk of splitMessage(source)) {
     const formatted = markdownToTelegram(chunk);
     try {
@@ -107,7 +107,7 @@ const HELP = [
   "Any other message goes to your currently selected agent.",
 ].join("\n");
 
-export function createBot(config: Config, router: Router): Bot {
+export function createBot(config: Config, router: Router, logger: Logger): Bot {
   const bot = new Bot(config.botToken);
 
   // --- Authentication: allowlist a single numeric user id. ---
@@ -163,7 +163,7 @@ export function createBot(config: Config, router: Router): Bot {
         router.selectAgent(ctx.chat.id, agentId);
         return ctx.reply(`Active agent is now: ${agentId}`);
       }
-      await handleTurn(ctx, router, text, agentId);
+      await handleTurn(ctx, router, logger, text, agentId);
     });
   }
 
@@ -174,7 +174,7 @@ export function createBot(config: Config, router: Router): Bot {
       // Reached here only if no command above matched.
       return ctx.reply("Unknown command. Send /help for the list.");
     }
-    await handleTurn(ctx, router, text);
+    await handleTurn(ctx, router, logger, text);
   });
 
   // --- Centralized error handling ---
@@ -192,6 +192,7 @@ export function createBot(config: Config, router: Router): Bot {
 async function handleTurn(
   ctx: Context,
   router: Router,
+  logger: Logger,
   text: string,
   overrideAgent?: string,
 ): Promise<void> {
@@ -212,7 +213,7 @@ async function handleTurn(
       chatId,
       durationMs: Date.now() - started,
     });
-    await sendReply(ctx, result.reply);
+    await sendReply(ctx, result.reply, logger);
   } catch (err) {
     logger.error("openclaw request failed", {
       agentId: agentForLog,

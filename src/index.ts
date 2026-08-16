@@ -2,19 +2,15 @@
 // start long polling, and shut down cleanly under systemd.
 
 import { loadConfig } from "./config";
-import { logger } from "./logger/logger";
-import { createNotifyServer } from "./notify";
-import { createOpenClawClient } from "./openclaw";
-import { Router } from "./router";
-import { createBot } from "./telegram";
+import { initContainers } from './container/init-containers';
+import { BotToken, LoggerToken, NotifyServerToken } from './tokens';
 
 function main(): void {
   const config = loadConfig();
-
-  const client = createOpenClawClient(config);
-  const router = new Router(client, config);
-  const bot = createBot(config, router);
-  const notifyServer = createNotifyServer(config, bot);
+  const container = initContainers(config);
+  const logger = container.resolve(LoggerToken);
+  const bot = container.resolve(BotToken);
+  const notifyServer = container.resolve(NotifyServerToken);
   logger.info("notify server listening", {
     host: config.notifyHost,
     port: config.notifyPort,

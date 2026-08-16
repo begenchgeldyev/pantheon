@@ -13,7 +13,7 @@
 
 import type { Bot } from "grammy";
 import type { Config } from "./config";
-import { logger } from "./logger/logger";
+import type { Logger } from "./logger/logger";
 import { markdownToTelegram, splitMessage } from "./telegram";
 
 type NotifyPayload = {
@@ -21,7 +21,7 @@ type NotifyPayload = {
   text?: unknown;
 };
 
-export function createNotifyServer(config: Config, bot: Bot) {
+export function createNotifyServer(config: Config, bot: Bot, logger: Logger) {
   const send = async (chatId: number, source: string): Promise<void> => {
     for (const chunk of splitMessage(source)) {
       const formatted = markdownToTelegram(chunk);
