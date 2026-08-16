@@ -2,7 +2,8 @@ import type { Container } from './container';
 import type { Registration } from './container.type';
 
 export class ContainerBinding<T> {
-    private instance: T | undefined;
+    private instance!: T;
+    private resolved = false;
 
     constructor(private registration: Registration<T>) {}
 
@@ -11,10 +12,10 @@ export class ContainerBinding<T> {
             return this.registration.factory(container);
         }
 
-        if (this.instance === undefined) {
+        if (this.resolved) {
             this.instance = this.registration.factory(container);
         }
-        
+
         return this.instance;
     }
 }
