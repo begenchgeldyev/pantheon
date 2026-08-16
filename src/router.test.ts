@@ -12,6 +12,9 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
     openclawBin: "openclaw",
     openclawTimeoutMs: 120000,
     logLevel: "info",
+    notifyHost: "127.0.0.1",
+    notifyPort: 8477,
+    notifySecret: "test-secret",
     ...overrides,
   };
 }

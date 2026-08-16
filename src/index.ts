@@ -3,6 +3,7 @@
 
 import { loadConfig } from "./config";
 import { logger } from "./logger/logger";
+import { createNotifyServer } from "./notify";
 import { createOpenClawClient } from "./openclaw";
 import { Router } from "./router";
 import { createBot } from "./telegram";
@@ -13,6 +14,11 @@ function main(): void {
   const client = createOpenClawClient(config);
   const router = new Router(client, config);
   const bot = createBot(config, router);
+  const notifyServer = createNotifyServer(config, bot);
+  logger.info("notify server listening", {
+    host: config.notifyHost,
+    port: config.notifyPort,
+  });
 
   // Set the command menu shown in Telegram clients (best-effort).
   bot.api
@@ -29,6 +35,7 @@ function main(): void {
     if (stopping) return;
     stopping = true;
     logger.info("shutting down", { signal });
+    notifyServer.stop(true);
     await bot.stop();
     process.exit(0);
   };

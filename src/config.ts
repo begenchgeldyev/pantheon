@@ -15,6 +15,12 @@ export type Config = {
   /** Hard timeout for a single OpenClaw turn, in milliseconds. */
   openclawTimeoutMs: number;
   logLevel: LoggerSeverity;
+  /** Loopback interface for the internal notify endpoint. */
+  notifyHost: string;
+  /** TCP port for the internal notify endpoint. */
+  notifyPort: number;
+  /** Shared secret required in X-Pantheon-Secret for POST /notify. */
+  notifySecret: string;
 };
 
 class ConfigError extends Error {
@@ -81,6 +87,13 @@ export function loadConfig(): Config {
     ) * 1000;
   const logLevel = parseLogLevel(optional("LOG_LEVEL", "info"));
 
+  const notifyHost = optional("NOTIFY_HOST", "127.0.0.1");
+  const notifyPort = parsePositiveInt(
+    "NOTIFY_PORT",
+    optional("NOTIFY_PORT", "8477"),
+  );
+  const notifySecret = required("NOTIFY_SECRET");
+
   return {
     botToken,
     allowedUserId,
@@ -89,5 +102,8 @@ export function loadConfig(): Config {
     openclawBin,
     openclawTimeoutMs,
     logLevel,
+    notifyHost,
+    notifyPort,
+    notifySecret,
   };
 }

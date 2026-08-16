@@ -6,7 +6,7 @@
 // OpenClaw/agent logic lives in the Router.
 
 import { Bot, type Context } from "grammy";
-import { marked } from "marked";
+import telegramifyMarkdown from "telegramify-markdown";
 import type { Config } from "./config";
 import type { Router } from "./router";
 import { logger } from "./logger/logger";
@@ -17,38 +17,10 @@ const AGENT_ID_RE = /^[a-z0-9_]+$/; // valid characters for a Telegram command
 
 const USER_ERROR = "⚠️ Something went wrong reaching the agent. Please try again.";
 
-// --- Markdown → Telegram HTML ---------------------------------------------
-// Telegram accepts only these inline tags. We let `marked` do the heavy
-// lifting (parsing + escaping), then rewrite the output down to that subset:
-// aliases mapped, block tags flattened to newlines, everything else stripped.
-const TG_TAGS = new Set(["b", "i", "u", "s", "code", "pre", "a", "blockquote"]);
-const ALIASES: Record<string, string> = { strong: "b", em: "i", del: "s" };
-const escHtml = (s: string) =>
-  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-marked.use({ gfm: true, breaks: true, async: false });
-
-export function markdownToHtml(source: string): string {
-  const html = marked.parse(source) as string;
-  return html
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<li>/gi, "• ")
-    .replace(/<(p|div|h[1-6]|ul|ol|tr|thead|tbody|table)(\s[^>]*)?>/gi, "")
-    .replace(/<\/(p|div|h[1-6]|li|ul|ol|tr|thead|tbody|table)>/gi, "\n")
-    .replace(/<\/?([a-z0-9]+)([^>]*)>/gi, (m, rawTag: string, attrs: string) => {
-      const closing = m.startsWith("</");
-      const tag = (ALIASES[rawTag.toLowerCase()] ?? rawTag.toLowerCase()) as string;
-      // Unknown tag → escape so the literal characters are still visible.
-      if (!TG_TAGS.has(tag)) return escHtml(m);
-      if (closing) return `</${tag}>`;
-      if (tag === "a") {
-        const href = /href="([^"]*)"/i.exec(attrs)?.[1];
-        return href ? `<a href="${href}">` : "<a>";
-      }
-      return `<${tag}>`;
-    })
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+// Convert agent Markdown to Telegram MarkdownV2, escaping everything Telegram
+// requires escaped so send never fails on stray punctuation.
+export function markdownToTelegram(source: string): string {
+  return telegramifyMarkdown(source, "escape");
 }
 
 /**
@@ -86,13 +58,13 @@ export function splitMessage(text: string, max = TELEGRAM_MAX): string[] {
  */
 async function sendReply(ctx: Context, source: string): Promise<void> {
   for (const chunk of splitMessage(source)) {
-    const html = markdownToHtml(chunk);
+    const formatted = markdownToTelegram(chunk);
     try {
-      await ctx.reply(html, { parse_mode: "HTML" });
+      await ctx.reply(formatted, { parse_mode: "MarkdownV2" });
     } catch (err) {
-      logger.warn("html send failed, retrying as plain text", {
+      logger.warn("markdown send failed, retrying as plain text", {
         error: err instanceof Error ? err.message : String(err),
-        sample: html.slice(0, 120),
+        sample: formatted.slice(0, 120),
       });
       await ctx.reply(chunk);
     }
