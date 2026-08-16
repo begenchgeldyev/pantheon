@@ -4,8 +4,9 @@ import type { Token } from './token';
 
 export class Container {
     private bindings = new Map<Token<unknown>, ContainerBinding<unknown>>();
+    private resolving: Token<unknown>[] = [];
 
-    constructor(private readonly parent: Container | null = null) {}
+    constructor(private readonly parent: Container | null = null) { }
 
     register<T>(token: Token<T>, registration: Registration<T>) {
         if (this.bindings.has(token)) {
@@ -17,18 +18,29 @@ export class Container {
 
     resolve<T>(token: Token<T>): T {
         const binding = this.bindings.get(token) as ContainerBinding<T> | undefined;
-        if (binding) {
-            return binding.resolve(this);
-        }
 
-        if (this.parent) {
+        if (!binding && this.parent) {
             return this.parent.resolve(token);
         }
 
-        throw new Error(`${token.toString()} is not registered.`);
+        if (!binding) {
+            throw new Error(`${token.toString()} is not registered.`);
+        }
+
+        if (this.resolving.includes(token)) {
+            const chain = [...this.resolving, token].map(t => t.toString()).join(' -> ');
+            throw new Error(`Circular dependency detected: ${chain}`);
+        }
+
+        this.resolving.push(token);
+        try {
+            return binding.resolve(this);
+        } finally {
+            this.resolving.pop();
+        }
     }
 
     createChild(): Container {
         return new Container(this)
-   }
+    }
 }
