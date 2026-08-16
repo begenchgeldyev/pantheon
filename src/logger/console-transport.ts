@@ -1,7 +1,7 @@
 import type { LoggerSeverity, LoggerTransport } from './logger.type';
 
 export class ConsoleTransport implements LoggerTransport {
-  write(message: string, severity: LoggerSeverity) {
+  write(severity: LoggerSeverity, message: string) {
     if (severity === 'warn' || severity === 'error') {
         console.error(message)
         return;
