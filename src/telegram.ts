@@ -1,13 +1,15 @@
 // Telegram integration (grammY).
 //
 // Responsibilities: authenticate the user, expose commands, show a typing
-// indicator while OpenClaw works, and deliver replies as plain text split to
-// fit Telegram's length limit. All OpenClaw/agent logic lives in the Router.
+// indicator while OpenClaw works, and deliver replies as HTML (converted from
+// the agent's Markdown) split to fit Telegram's length limit. All
+// OpenClaw/agent logic lives in the Router.
 
 import { Bot, type Context } from "grammy";
+import { marked } from "marked";
 import type { Config } from "./config";
 import type { Router } from "./router";
-import { log } from "./logger";
+import { logger } from "./logger/logger";
 
 // Telegram hard limit is 4096 chars; stay just under for safety.
 const TELEGRAM_MAX = 4000;
@@ -15,9 +17,44 @@ const AGENT_ID_RE = /^[a-z0-9_]+$/; // valid characters for a Telegram command
 
 const USER_ERROR = "⚠️ Something went wrong reaching the agent. Please try again.";
 
+// --- Markdown → Telegram HTML ---------------------------------------------
+// Telegram accepts only these inline tags. We let `marked` do the heavy
+// lifting (parsing + escaping), then rewrite the output down to that subset:
+// aliases mapped, block tags flattened to newlines, everything else stripped.
+const TG_TAGS = new Set(["b", "i", "u", "s", "code", "pre", "a", "blockquote"]);
+const ALIASES: Record<string, string> = { strong: "b", em: "i", del: "s" };
+const escHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+marked.use({ gfm: true, breaks: true, async: false });
+
+export function markdownToHtml(source: string): string {
+  const html = marked.parse(source) as string;
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li>/gi, "• ")
+    .replace(/<\/(p|div|h[1-6]|li|ul|ol|tr|thead|tbody|table)>/gi, "\n")
+    .replace(/<\/?([a-z0-9]+)([^>]*)>/gi, (m, rawTag: string, attrs: string) => {
+      const closing = m.startsWith("</");
+      const tag = (ALIASES[rawTag.toLowerCase()] ?? rawTag.toLowerCase()) as string;
+      // Unknown tag → escape so the literal characters are still visible.
+      if (!TG_TAGS.has(tag)) return escHtml(m);
+      if (closing) return `</${tag}>`;
+      if (tag === "a") {
+        const href = /href="([^"]*)"/i.exec(attrs)?.[1];
+        return href ? `<a href="${href}">` : "<a>";
+      }
+      return `<${tag}>`;
+    })
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /**
  * Split text into Telegram-sized chunks without breaking Unicode code points.
  * Prefers to break at newlines, then spaces, before falling back to a hard cut.
+ * Operates on the Markdown source (before HTML conversion) so tags can never
+ * straddle a chunk boundary.
  */
 export function splitMessage(text: string, max = TELEGRAM_MAX): string[] {
   const points = Array.from(text); // code points, so surrogate pairs stay intact
@@ -41,12 +78,23 @@ export function splitMessage(text: string, max = TELEGRAM_MAX): string[] {
   return chunks.map((c) => c.trim()).filter((c) => c.length > 0);
 }
 
-/** Send a (possibly long) plain-text reply as one or more messages. */
-async function sendReply(ctx: Context, text: string): Promise<void> {
-  for (const chunk of splitMessage(text)) {
-    // No parse_mode: agent output is sent verbatim, so it can never trigger a
-    // Telegram Markdown/HTML parse error.
-    await ctx.reply(chunk);
+/**
+ * Send a (possibly long) reply as one or more HTML messages. If Telegram
+ * rejects the HTML (rare, but possible if the converter emits something
+ * invalid), fall back to plain text so the user still gets the reply.
+ */
+async function sendReply(ctx: Context, source: string): Promise<void> {
+  for (const chunk of splitMessage(source)) {
+    const html = markdownToHtml(chunk);
+    try {
+      await ctx.reply(html, { parse_mode: "HTML" });
+    } catch (err) {
+      logger.warn("html send failed, retrying as plain text", {
+        error: err instanceof Error ? err.message : String(err),
+        sample: html.slice(0, 120),
+      });
+      await ctx.reply(chunk);
+    }
   }
 }
 
@@ -93,10 +141,10 @@ export function createBot(config: Config, router: Router): Bot {
   bot.use(async (ctx, next) => {
     const fromId = ctx.from?.id;
     if (fromId !== config.allowedUserId) {
-      log.warn("rejected unauthorized message", { fromId: fromId ?? null });
+      logger.warn("rejected unauthorized message", { fromId: fromId ?? null });
       return; // ignore silently
     }
-    log.info("authorized message received", {
+    logger.info("authorized message received", {
       userId: fromId,
       chatId: ctx.chat?.id,
     });
@@ -126,7 +174,7 @@ export function createBot(config: Config, router: Router): Bot {
     if (!router.selectAgent(ctx.chat.id, name)) {
       return ctx.reply(`Unknown agent: ${name}\n\n${agentsList(router)}`);
     }
-    log.info("selected agent", { chatId: ctx.chat.id, agentId: name });
+    logger.info("selected agent", { chatId: ctx.chat.id, agentId: name });
     return ctx.reply(`Active agent is now: ${name}`);
   });
 
@@ -158,7 +206,7 @@ export function createBot(config: Config, router: Router): Bot {
 
   // --- Centralized error handling ---
   bot.catch((err) => {
-    log.error("bot handler error", {
+    logger.error("bot handler error", {
       error: err.error instanceof Error ? err.error.message : String(err.error),
     });
     err.ctx.reply(USER_ERROR).catch(() => {});
@@ -180,20 +228,20 @@ async function handleTurn(
 
   const started = Date.now();
   const agentForLog = overrideAgent ?? router.getSelectedAgent(chatId);
-  log.info("openclaw request started", { agentId: agentForLog, chatId });
+  logger.info("openclaw request started", { agentId: agentForLog, chatId });
 
   try {
     const result = await withTyping(ctx, () =>
       router.route({ userId, chatId, text, overrideAgent }),
     );
-    log.info("openclaw response completed", {
+    logger.info("openclaw response completed", {
       agentId: result.agentId,
       chatId,
       durationMs: Date.now() - started,
     });
     await sendReply(ctx, result.reply);
   } catch (err) {
-    log.error("openclaw request failed", {
+    logger.error("openclaw request failed", {
       agentId: agentForLog,
       chatId,
       durationMs: Date.now() - started,

@@ -1,10 +1,5 @@
-// Configuration loading and validation.
-//
-// Bun automatically loads .env, so we only read from process.env here.
-// Required variables are validated at startup; anything missing throws a
-// clear error before the bot ever connects to Telegram.
+import type { LoggerSeverity } from './logger';
 
-export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export type Config = {
   /** Telegram bot token from BotFather. Secret. */
@@ -19,7 +14,7 @@ export type Config = {
   openclawBin: string;
   /** Hard timeout for a single OpenClaw turn, in milliseconds. */
   openclawTimeoutMs: number;
-  logLevel: LogLevel;
+  logLevel: LoggerSeverity;
 };
 
 class ConfigError extends Error {
@@ -49,7 +44,7 @@ function parsePositiveInt(name: string, raw: string): number {
   return n;
 }
 
-function parseLogLevel(raw: string): LogLevel {
+function parseLogLevel(raw: string): LoggerSeverity {
   if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") {
     return raw;
   }

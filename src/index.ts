@@ -2,14 +2,13 @@
 // start long polling, and shut down cleanly under systemd.
 
 import { loadConfig } from "./config";
-import { configureLogger, log } from "./logger";
+import { logger } from "./logger/logger";
 import { createOpenClawClient } from "./openclaw";
 import { Router } from "./router";
 import { createBot } from "./telegram";
 
 function main(): void {
   const config = loadConfig();
-  configureLogger(config.logLevel);
 
   const client = createOpenClawClient(config);
   const router = new Router(client, config);
@@ -23,13 +22,13 @@ function main(): void {
       { command: "agents", description: "List known agents" },
       { command: "agent", description: "Select the active agent" },
     ])
-    .catch((err) => log.warn("failed to set commands", { error: String(err) }));
+    .catch((err) => logger.warn("failed to set commands", { error: String(err) }));
 
   let stopping = false;
   const shutdown = async (signal: string) => {
     if (stopping) return;
     stopping = true;
-    log.info("shutting down", { signal });
+    logger.info("shutting down", { signal });
     await bot.stop();
     process.exit(0);
   };
@@ -42,7 +41,7 @@ function main(): void {
   bot
     .start({
       onStart: (me) =>
-        log.info("bot started", {
+        logger.info("bot started", {
           username: me.username,
           defaultAgent: config.defaultAgent,
           agents: config.agents,
@@ -50,7 +49,7 @@ function main(): void {
     })
     .catch((err) => {
       if (stopping) return;
-      log.error("bot stopped unexpectedly", {
+      logger.error("bot stopped unexpectedly", {
         error: err instanceof Error ? err.message : String(err),
       });
       process.exit(1);
