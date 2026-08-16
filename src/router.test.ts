@@ -7,8 +7,8 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
     botToken: "x",
     allowedUserId: 1,
-    defaultAgent: "iris",
-    agents: ["iris", "atlas"],
+    defaultAgent: "hermes",
+    agents: ["hermes", "athena"],
     openclawBin: "openclaw",
     openclawTimeoutMs: 120000,
     logLevel: "info",
@@ -29,15 +29,15 @@ function recordingClient(): { client: OpenClawClient; calls: SendMessageInput[] 
 
 test("falls back to the default agent", () => {
   const router = new Router(recordingClient().client, makeConfig());
-  expect(router.getSelectedAgent(42)).toBe("iris");
+  expect(router.getSelectedAgent(42)).toBe("hermes");
 });
 
 test("selects a known agent and rejects unknown ones", () => {
   const router = new Router(recordingClient().client, makeConfig());
-  expect(router.selectAgent(42, "atlas")).toBe(true);
-  expect(router.getSelectedAgent(42)).toBe("atlas");
+  expect(router.selectAgent(42, "athena")).toBe(true);
+  expect(router.getSelectedAgent(42)).toBe("athena");
   expect(router.selectAgent(42, "ghost")).toBe(false);
-  expect(router.getSelectedAgent(42)).toBe("atlas"); // unchanged
+  expect(router.getSelectedAgent(42)).toBe("athena"); // unchanged
 });
 
 test("session key is stable per user+chat", () => {
@@ -48,12 +48,12 @@ test("session key is stable per user+chat", () => {
 test("route uses the selected agent", async () => {
   const { client, calls } = recordingClient();
   const router = new Router(client, makeConfig());
-  router.selectAgent(9, "atlas");
+  router.selectAgent(9, "athena");
   const result = await router.route({ userId: 7, chatId: 9, text: "hi" });
-  expect(result.agentId).toBe("atlas");
-  expect(result.reply).toBe("reply from atlas");
+  expect(result.agentId).toBe("athena");
+  expect(result.reply).toBe("reply from athena");
   expect(calls[0]).toEqual({
-    agentId: "atlas",
+    agentId: "athena",
     message: "hi",
     sessionKey: "telegram:7:9",
   });
@@ -66,9 +66,9 @@ test("overrideAgent routes one message without changing selection", async () => 
     userId: 7,
     chatId: 9,
     text: "one-shot",
-    overrideAgent: "atlas",
+    overrideAgent: "athena",
   });
-  expect(result.agentId).toBe("atlas");
-  expect(calls[0]?.agentId).toBe("atlas");
-  expect(router.getSelectedAgent(9)).toBe("iris"); // selection untouched
+  expect(result.agentId).toBe("athena");
+  expect(calls[0]?.agentId).toBe("athena");
+  expect(router.getSelectedAgent(9)).toBe("hermes"); // selection untouched
 });

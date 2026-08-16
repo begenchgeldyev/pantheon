@@ -31,7 +31,7 @@ export class OpenClawError extends Error {
  * the field names OpenClaw-style tools commonly use and fail loudly with the
  * observed keys if none match, so this function can be tightened after running:
  *
- *   openclaw agent --agent iris --session-key pantheon-test \
+ *   openclaw agent --agent hermes --session-key pantheon-test \
  *     --message "Reply with exactly: PANTHEON_OK" --json
  *
  * Keep this the single place that encodes response-shape assumptions.

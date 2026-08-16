@@ -180,7 +180,7 @@ export function createBot(config: Config, router: Router): Bot {
   });
 
   // --- One-shot per-agent commands (generated from the agent list) ---
-  // e.g. `/iris remind me ...` routes a single message to iris without
+  // e.g. `/hermes remind me ...` routes a single message to hermes without
   // changing the selected agent. Only ids that are valid Telegram commands.
   for (const agentId of router.listAgents()) {
     if (!AGENT_ID_RE.test(agentId)) continue;

@@ -15,7 +15,7 @@ Telegram
    │  (long polling)
    ▼
 Pantheon ── auth (allowlist) ── Router ── OpenClaw CLI ──► OpenClaw Gateway
-                                                              ├── Iris
+                                                              ├── Hermes
                                                               ├── … other agents
                                                               └── future agents
 ```
@@ -77,7 +77,7 @@ chmod 600 .env        # the token is a secret
 | -------------------------- | :------: | ------------------------------------------------------------- |
 | `TELEGRAM_BOT_TOKEN`       |    ✅    | BotFather token (secret).                                     |
 | `TELEGRAM_ALLOWED_USER_ID` |    ✅    | Your numeric Telegram user id.                                |
-| `DEFAULT_AGENT`            |    ✅    | Agent used when none is selected (e.g. `iris`).               |
+| `DEFAULT_AGENT`            |    ✅    | Agent used when none is selected (e.g. `hermes`).             |
 | `OPENCLAW_AGENTS`          |          | Comma-separated known agents. `DEFAULT_AGENT` always included.|
 | `OPENCLAW_BIN`             |          | OpenClaw CLI name or path. Default `openclaw`.                |
 | `OPENCLAW_TIMEOUT_SECONDS` |          | Per-turn timeout. Default `120`.                              |
@@ -192,7 +192,7 @@ This dev environment has no OpenClaw, so run this once on the VPS and check the
 output:
 
 ```bash
-openclaw agent --agent iris --session-key pantheon-test \
+openclaw agent --agent hermes --session-key pantheon-test \
   --message "Reply with exactly: PANTHEON_OK" --json
 ```
 
