@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { splitMessage } from "./telegram";
+import { isAllowed, splitMessage } from "./telegram";
 
 test("short text is a single chunk", () => {
   expect(splitMessage("hello")).toEqual(["hello"]);
@@ -30,4 +30,12 @@ test("does not break Unicode code points", () => {
     expect(c.includes("�")).toBe(false);
   }
   expect(chunks.join("")).toBe(text);
+});
+
+test("isAllowed matches case-insensitively and rejects missing usernames", () => {
+  const allowed = new Set(["begench", "amina"]);
+  expect(isAllowed("Begench", allowed)).toBe(true);
+  expect(isAllowed("@amina", allowed)).toBe(true);
+  expect(isAllowed("ghost", allowed)).toBe(false);
+  expect(isAllowed(undefined, allowed)).toBe(false);
 });

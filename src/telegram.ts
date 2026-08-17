@@ -7,13 +7,14 @@
 
 import { Bot, type Context } from "grammy";
 import telegramifyMarkdown from "telegramify-markdown";
-import type { Config } from "./config";
+import { normalizeUsername, type Config } from "./config";
 import type { Logger } from "./logger/logger";
+import type { Provisioner } from "./provisioner";
+import type { Registry } from "./registry";
 import type { Router } from "./router";
 
 // Telegram hard limit is 4096 chars; stay just under for safety.
 const TELEGRAM_MAX = 4000;
-const AGENT_ID_RE = /^[a-z0-9_]+$/; // valid characters for a Telegram command
 
 const USER_ERROR = "⚠️ Something went wrong reaching the agent. Please try again.";
 
@@ -86,141 +87,95 @@ async function withTyping<T>(ctx: Context, work: () => Promise<T>): Promise<T> {
   }
 }
 
-function agentsList(router: Router): string {
-  const lines = router
-    .listAgents()
-    .map((a) => `• ${a}`)
-    .join("\n");
-  return `Known agents:\n${lines}`;
+export function isAllowed(username: string | undefined, allowed: Set<string>): boolean {
+  if (!username) return false;
+  return allowed.has(normalizeUsername(username));
 }
 
 const HELP = [
-  "Pantheon — Telegram gateway to OpenClaw.",
+  "Pantheon — your personal Hermes, a Telegram gateway to OpenClaw.",
+  "",
+  "Just write to me: dates to remember, reminders to schedule, questions about what's coming up.",
   "",
   "Commands:",
   "/start — check the connection",
   "/help — show this help",
-  "/agents — list known agents",
-  "/agent <name> — select the active agent",
-  "/<agent> <message> — send one message to a specific agent",
-  "",
-  "Any other message goes to your currently selected agent.",
 ].join("\n");
 
-export function createBot(config: Config, router: Router, logger: Logger): Bot {
+export function createBot(
+  config: Config,
+  router: Router,
+  provisioner: Provisioner,
+  registry: Registry,
+  logger: Logger,
+): Bot {
   const bot = new Bot(config.botToken);
 
-  // --- Authentication: allowlist a single numeric user id. ---
+  // --- Authentication: allow-listed Telegram usernames only. ---
   bot.use(async (ctx, next) => {
-    const fromId = ctx.from?.id;
-    if (fromId !== config.allowedUserId) {
-      logger.warn("rejected unauthorized message", { fromId: fromId ?? null });
+    const from = ctx.from;
+    if (!from || from.is_bot || !isAllowed(from.username, config.allowedUsernames)) {
+      logger.warn("rejected unauthorized message", { fromId: from?.id ?? null, username: from?.username ?? null });
       return; // ignore silently
     }
-    logger.info("authorized message received", {
-      userId: fromId,
-      chatId: ctx.chat?.id,
-    });
+    if (ctx.chat?.type !== "private") return; // no group chats: one user, one agent
     await next();
   });
 
-  // --- Static commands ---
-  bot.command("start", (ctx) =>
-    ctx.reply(
-      `Pantheon is connected and ready.\nActive agent: ${router.getSelectedAgent(
-        ctx.chat.id,
-      )}\nSend /help for commands.`,
-    ),
-  );
-
-  bot.command("help", (ctx) => ctx.reply(HELP));
-
-  bot.command("agents", (ctx) => ctx.reply(agentsList(router)));
-
-  bot.command("agent", (ctx) => {
-    const name = ctx.match.trim();
-    if (!name) {
-      return ctx.reply(
-        `Current agent: ${router.getSelectedAgent(ctx.chat.id)}\n\n${agentsList(router)}`,
-      );
+  // --- Ensure the user has an agent (provisions on first contact). ---
+  bot.use(async (ctx, next) => {
+    const from = ctx.from!;
+    const username = normalizeUsername(from.username!);
+    const chatId = ctx.chat!.id;
+    try {
+      const known = registry.findByUserId(from.id);
+      if (known) {
+        registry.touch(from.id, username, chatId);
+      } else {
+        await withTyping(ctx, () =>
+          provisioner.ensureUser({ tgUserId: from.id, username, firstName: from.first_name, chatId }),
+        );
+        await ctx.reply("Hi, I'm Hermes — your own personal assistant for dates and reminders. Tell me what to remember or when to remind you.");
+      }
+    } catch (err) {
+      logger.error("provisioning failed", { userId: from.id, error: err instanceof Error ? err.message : String(err) });
+      await ctx.reply(USER_ERROR);
+      return;
     }
-    if (!router.selectAgent(ctx.chat.id, name)) {
-      return ctx.reply(`Unknown agent: ${name}\n\n${agentsList(router)}`);
-    }
-    logger.info("selected agent", { chatId: ctx.chat.id, agentId: name });
-    return ctx.reply(`Active agent is now: ${name}`);
+    await next();
   });
 
-  // --- One-shot per-agent commands (generated from the agent list) ---
-  // e.g. `/hermes remind me ...` routes a single message to hermes without
-  // changing the selected agent. Only ids that are valid Telegram commands.
-  for (const agentId of router.listAgents()) {
-    if (!AGENT_ID_RE.test(agentId)) continue;
-    bot.command(agentId, async (ctx) => {
-      const text = ctx.match.trim();
-      if (!text) {
-        // No message: treat as a selection, like /agent <id>.
-        router.selectAgent(ctx.chat.id, agentId);
-        return ctx.reply(`Active agent is now: ${agentId}`);
-      }
-      await handleTurn(ctx, router, logger, text, agentId);
-    });
-  }
+  bot.command("start", (ctx) =>
+    ctx.reply(`Pantheon is connected and ready.\nYour agent: ${router.agentFor(ctx.from!.id)}\nSend /help for commands.`),
+  );
+  bot.command("help", (ctx) => ctx.reply(HELP));
 
-  // --- Free-form text ---
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
-    if (text.startsWith("/")) {
-      // Reached here only if no command above matched.
-      return ctx.reply("Unknown command. Send /help for the list.");
-    }
+    if (text.startsWith("/")) return ctx.reply("Unknown command. Send /help for the list.");
     await handleTurn(ctx, router, logger, text);
   });
 
-  // --- Centralized error handling ---
   bot.catch((err) => {
-    logger.error("bot handler error", {
-      error: err.error instanceof Error ? err.error.message : String(err.error),
-    });
+    logger.error("bot handler error", { error: err.error instanceof Error ? err.error.message : String(err.error) });
     err.ctx.reply(USER_ERROR).catch(() => {});
   });
 
   return bot;
 }
 
-/** Run one agent turn: route via OpenClaw and reply. Errors stay server-side. */
-async function handleTurn(
-  ctx: Context,
-  router: Router,
-  logger: Logger,
-  text: string,
-  overrideAgent?: string,
-): Promise<void> {
+async function handleTurn(ctx: Context, router: Router, logger: Logger, text: string): Promise<void> {
   const chatId = ctx.chat?.id;
   const userId = ctx.from?.id;
   if (chatId === undefined || userId === undefined) return;
-
   const started = Date.now();
-  const agentForLog = overrideAgent ?? router.getSelectedAgent(chatId);
-  logger.info("openclaw request started", { agentId: agentForLog, chatId });
-
+  logger.info("openclaw request started", { userId, chatId });
   try {
-    const result = await withTyping(ctx, () =>
-      router.route({ userId, chatId, text, overrideAgent }),
-    );
-    logger.info("openclaw response completed", {
-      agentId: result.agentId,
-      chatId,
-      durationMs: Date.now() - started,
-    });
+    const result = await withTyping(ctx, () => router.route({ userId, chatId, text }));
+    logger.info("openclaw response completed", { agentId: result.agentId, chatId, durationMs: Date.now() - started });
     await sendReply(ctx, result.reply, logger);
   } catch (err) {
-    logger.error("openclaw request failed", {
-      agentId: agentForLog,
-      chatId,
-      durationMs: Date.now() - started,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logger.error("openclaw request failed", { userId, chatId, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) });
     await ctx.reply(USER_ERROR);
   }
 }
