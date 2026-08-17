@@ -13,41 +13,37 @@ export function createCliRunner(bin: string, timeoutMs = 60_000): CliRunner {
   return async (args) => {
     const proc = Bun.spawn([bin, ...args], { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     let timedOut = false;
+    let rejectDeadline!: (e: Error) => void;
+    const deadline = new Promise<never>((_, reject) => { rejectDeadline = reject; });
+    // Observe deadline so rejection doesn't leak if work wins the race
+    deadline.catch(() => {});
 
-    const mainTimer = setTimeout(() => {
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const timer = setTimeout(() => {
       timedOut = true;
       proc.kill("SIGTERM");
-
       // Escalate to SIGKILL after 2 seconds if process doesn't exit
-      setTimeout(() => {
-        if (timedOut) {
-          proc.kill("SIGKILL");
-        }
-      }, 2000);
+      killTimer = setTimeout(() => proc.kill("SIGKILL"), 2000);
+      rejectDeadline(new Error(`command timed out after ${timeoutMs}ms: ${bin} ${args.join(" ")}`));
     }, timeoutMs);
 
+    const work = (async () => {
+      const [stdout, stderr] = await Promise.all([readStream(proc.stdout), readStream(proc.stderr)]);
+      const code = await proc.exited;
+      return { code, stdout, stderr };
+    })();
+    // Observe work so rejection doesn't leak if deadline wins the race
+    work.catch(() => {});
+
     try {
-      const timeoutMsg = `command timed out after ${timeoutMs}ms: ${bin} ${args[0] ?? ""}`;
-
-      // Race the actual work against a deadline that monitors timeout
-      const work = (async () => {
-        const [stdout, stderr] = await Promise.all([readStream(proc.stdout), readStream(proc.stderr)]);
-        const code = await proc.exited;
-        if (timedOut) throw new Error(timeoutMsg);
-        return { code, stdout, stderr };
-      })();
-
-      // Deadline promise that rejects if timeout occurs during work
-      const deadline = (async () => {
-        while (!timedOut) {
-          await new Promise(resolve => setTimeout(resolve, 10));
-        }
-        throw new Error(timeoutMsg);
-      })();
-
-      return await Promise.race([work, deadline]);
+      const result = await Promise.race([work, deadline]);
+      // Check if timeout occurred after race settled
+      if (timedOut) throw new Error(`command timed out after ${timeoutMs}ms: ${bin} ${args.join(" ")}`);
+      return result;
     } finally {
-      clearTimeout(mainTimer);
+      clearTimeout(timer);
+      // Clear killTimer only if we didn't timeout; on timeout path let SIGKILL escalation fire
+      if (!timedOut && killTimer) clearTimeout(killTimer);
     }
   };
 }
