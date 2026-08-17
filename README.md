@@ -32,12 +32,16 @@ Reminders: agent ──exec remind*──► openclaw cron ──POST /notify {a
 | `notify.ts`        | Loopback endpoint: `{agentId,text}` → the owning user's chat.         |
 | `workspace-template/` | Persona files seeded into every new user workspace.               |
 | `bin/`             | `remind*` helpers installed to `~/bin` (the only exec user agents may run). |
+| `container/`       | Tiny DI container wiring the modules together (`init-containers.ts`). |
+| `logger/`          | Structured JSON logging (metadata only, never secrets).           |
+| `tokens.ts`        | DI tokens.                                                        |
+| `types.ts`         | Shared types / the `OpenClawClient` interface.                    |
 
 ## Requirements
 
 - A Linux VPS that already runs **OpenClaw** (Pantheon runs on the *same* host).
 - **Bun** (`curl -fsSL https://bun.sh/install | bash`).
-- A Telegram bot token and your numeric Telegram user id (below).
+- A Telegram bot token and the Telegram usernames of the people allowed to use it (below).
 
 Pantheon calls the OpenClaw CLI locally — there is no SSH, no HTTP between
 Pantheon and OpenClaw, and no database.
@@ -137,9 +141,9 @@ journalctl -u pantheon -f              # follow
 journalctl -u pantheon -n 200 --no-pager
 ```
 
-Key events: `bot started`, `authorized message received`,
-`rejected unauthorized message`, `selected agent`, `openclaw request started`,
-`openclaw response completed`, `openclaw request failed`. Logs contain metadata
+Key events: `bot started`, `rejected unauthorized message`, `provisioning agent`,
+`provisioned agent`, `openclaw request started`, `openclaw response completed`,
+`openclaw request failed`, `notify delivered`, `notify rejected`. Logs contain metadata
 only (user id, agent, duration, error type) — never message bodies or secrets.
 
 | Symptom                              | Likely cause / fix                                        |
@@ -182,7 +186,7 @@ This dev environment has no OpenClaw, so run this once on the VPS and check the
 output:
 
 ```bash
-openclaw agent --agent hermes --session-key pantheon-test \
+openclaw agent --agent main --session-key pantheon-test \
   --message "Reply with exactly: PANTHEON_OK" --json
 ```
 
