@@ -1,0 +1,15 @@
+#!/bin/bash
+# Schedule a one-shot reminder at a specific time.
+# Usage: remind <ISO-8601 timestamp> <job-name-slug> <message text>
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/remind-lib"
+if [ "$#" -lt 3 ]; then
+  echo "usage: remind <iso-timestamp> <job-name> <message text...>" >&2
+  exit 2
+fi
+AT="$1"; NAME="$2"; shift 2; MSG="$*"
+AGENT=$(pantheon_agent_id)
+openclaw cron add "${AGENT}--${NAME}" --agent "$AGENT" --at "$AT" \
+  --command "$NOTIFY_CMD" \
+  --command-input "$(notify_body "$AGENT" "$MSG")" \
+  --delete-after-run --best-effort-deliver

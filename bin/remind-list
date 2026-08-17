@@ -1,0 +1,9 @@
+#!/bin/bash
+# List this agent's reminders (name, schedule, next run).
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/remind-lib"
+AGENT=$(pantheon_agent_id)
+openclaw cron list --json | jq -r --arg p "${AGENT}--" '
+  .jobs[] | select(.name | startswith($p))
+  | "\(.name | ltrimstr($p))\t\(.schedule.kind)\t\(.schedule.at // .schedule.expr // "")\tnext=\(.state.nextRunAtMs // "-")"' \
+  | column -t -s $'\t' || true

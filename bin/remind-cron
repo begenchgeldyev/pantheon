@@ -1,0 +1,15 @@
+#!/bin/bash
+# Schedule a recurring reminder.
+# Usage: remind-cron "<5-field cron expr, UTC>" <job-name-slug> <message text>
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/remind-lib"
+if [ "$#" -lt 3 ]; then
+  echo "usage: remind-cron \"<cron expr>\" <job-name> <message text...>" >&2
+  exit 2
+fi
+EXPR="$1"; NAME="$2"; shift 2; MSG="$*"
+AGENT=$(pantheon_agent_id)
+openclaw cron add "${AGENT}--${NAME}" --agent "$AGENT" --cron "$EXPR" \
+  --command "$NOTIFY_CMD" \
+  --command-input "$(notify_body "$AGENT" "$MSG")" \
+  --best-effort-deliver

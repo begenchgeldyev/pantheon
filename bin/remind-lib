@@ -1,0 +1,24 @@
+#!/bin/bash
+# Shared helpers for the remind* scripts. Sourced, not executed.
+
+# The agent id is derived from the working directory OpenClaw's exec tool
+# uses, which is always the agent's workspace:
+#   <stateDir>/workspace        -> main
+#   <stateDir>/workspace-<id>   -> <id>
+pantheon_agent_id() {
+  local base
+  base=$(basename "$PWD")
+  case "$base" in
+    workspace)   echo "main" ;;
+    workspace-*) echo "${base#workspace-}" ;;
+    *) echo "remind: cannot determine agent from cwd: $PWD" >&2; return 3 ;;
+  esac
+}
+
+# Command executed by the cron job at fire time. The JSON body (with agentId
+# baked in at schedule time) is passed on stdin via --command-input.
+NOTIFY_CMD='curl -sf -X POST http://127.0.0.1:8477/notify -H "X-Pantheon-Secret: $PANTHEON_NOTIFY_SECRET" -H "Content-Type: application/json" -d @-'
+
+notify_body() { # $1 agent id, $2 text
+  jq -nc --arg a "$1" --arg t "$2" '{agentId:$a,text:$t}'
+}

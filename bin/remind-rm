@@ -1,0 +1,10 @@
+#!/bin/bash
+# Cancel a reminder by its job name (without the agent prefix).
+# Usage: remind-rm <job-name-slug>
+set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/remind-lib"
+if [ "$#" -ne 1 ]; then echo "usage: remind-rm <job-name>" >&2; exit 2; fi
+AGENT=$(pantheon_agent_id)
+ID=$(openclaw cron list --json | jq -r --arg n "${AGENT}--$1" '.jobs[] | select(.name == $n) | .id' | head -1)
+if [ -z "$ID" ]; then echo "no reminder named: $1" >&2; exit 4; fi
+openclaw cron rm "$ID"
