@@ -1,5 +1,5 @@
-import { test, expect } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { test, expect, afterEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Provisioner, USER_TOOL_POLICY } from "./provisioner";
@@ -10,8 +10,15 @@ import { loadConfig } from "./config";
 
 const silent = new Logger({ write: () => {} }, "error");
 
+const roots: string[] = [];
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
 function setup() {
   const root = mkdtempSync(path.join(tmpdir(), "prov-"));
+  roots.push(root);
   const stateDir = path.join(root, "state");
   const templateDir = path.join(root, "tmpl");
   mkdirSync(stateDir); mkdirSync(templateDir);
@@ -45,10 +52,61 @@ function setup() {
   const failingProv = () => new Provisioner({
     cli: async () => ({ code: 1, stdout: "", stderr: "boom" }), registry, config, templateDir, logger: silent,
   });
-  return { prov, registry, calls, stateDir, config, seedAgent, failingProv };
+  return { prov, registry, calls, stateDir, templateDir, config, seedAgent, failingProv };
+}
+
+/**
+ * Fake CLI that awaits a small delay per call and tracks how many calls are
+ * in flight at once, for exercising the Provisioner's serialisation chain.
+ */
+function setupDelayed(opts: { failAgentId?: string } = {}) {
+  const root = mkdtempSync(path.join(tmpdir(), "prov-"));
+  roots.push(root);
+  const stateDir = path.join(root, "state");
+  const templateDir = path.join(root, "tmpl");
+  mkdirSync(stateDir); mkdirSync(templateDir);
+  writeFileSync(path.join(templateDir, "AGENTS.md"), "# agents");
+  writeFileSync(path.join(templateDir, "USER.md.tmpl"), "Name: {{NAME}} @{{USERNAME}}");
+  const config = loadConfig({
+    TELEGRAM_BOT_TOKEN: "t", TELEGRAM_ALLOWED_USERNAMES: "begench,amina",
+    TELEGRAM_OWNER_USERNAME: "begench", NOTIFY_SECRET: "s",
+    OPENCLAW_STATE_DIR: stateDir, PANTHEON_DATA_DIR: root,
+  });
+  const calls: string[][] = [];
+  let agents: Array<{ id: string }> = [{ id: "main" }];
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const cli = async (args: string[]): Promise<CliResult> => {
+    inFlight++;
+    maxInFlight = Math.max(maxInFlight, inFlight);
+    calls.push(args);
+    await new Promise((resolve) => setTimeout(resolve, 8));
+    try {
+      const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" });
+      if (args[0] === "agents" && args[1] === "list") return ok(JSON.stringify(agents));
+      if (args[0] === "agents" && args[1] === "add") {
+        const id = args[2]!;
+        if (opts.failAgentId && id === opts.failAgentId) return { code: 1, stdout: "", stderr: "boom" };
+        const ws = args[args.indexOf("--workspace") + 1]!;
+        mkdirSync(ws, { recursive: true });
+        writeFileSync(path.join(ws, "BOOTSTRAP.md"), "seeded");
+        writeFileSync(path.join(ws, "AGENTS.md"), "default seeded");
+        agents = [...agents, { id }];
+        return ok("{}");
+      }
+      if (args[0] === "config" && args[1] === "get") return ok(JSON.stringify(agents));
+      return ok("");
+    } finally {
+      inFlight--;
+    }
+  };
+  const registry = new Registry(":memory:");
+  const prov = new Provisioner({ cli, registry, config, templateDir, logger: silent });
+  return { prov, registry, calls, stateDir, getMaxInFlight: () => maxInFlight };
 }
 
 const amina = { tgUserId: 42, username: "amina", firstName: "Amina", chatId: 42 };
+const kofi = { tgUserId: 43, username: "kofi", firstName: "Kofi", chatId: 43 };
 
 test("owner maps to main without provisioning", async () => {
   const { prov, calls } = setup();
@@ -73,6 +131,16 @@ test("new user gets u_<id> agent, template files, policy and allowlist", async (
   expect(calls.some((c) => c[0] === "approvals" && c[1] === "allowlist" && c[2] === "add" && c[3] === "/home/openclaw/bin/remind*" && c.includes("u_42"))).toBe(true);
 });
 
+test("MEMORY.md is preserved, never overwritten by the template", async () => {
+  const { prov, stateDir, templateDir } = setup();
+  writeFileSync(path.join(templateDir, "MEMORY.md"), "template default - must never overwrite user memory");
+  const ws = path.join(stateDir, "workspace-u_42");
+  mkdirSync(ws, { recursive: true });
+  writeFileSync(path.join(ws, "MEMORY.md"), "keep me");
+  await prov.ensureUser(amina);
+  expect(readFileSync(path.join(ws, "MEMORY.md"), "utf8")).toBe("keep me");
+});
+
 test("second call is a no-op and returns the registry row", async () => {
   const { prov, calls } = setup();
   await prov.ensureUser(amina);
@@ -95,5 +163,34 @@ test("agents add is skipped when the agent already exists in OpenClaw", async ()
 test("CLI failure propagates and nothing is registered", async () => {
   const { registry, failingProv } = setup();
   await expect(failingProv().ensureUser(amina)).rejects.toThrow(/agents list/);
+  expect(registry.findByUserId(42)).toBeNull();
+});
+
+test("concurrent ensureUser for different users is serialised, not parallel", async () => {
+  const { prov, calls, getMaxInFlight } = setupDelayed();
+  const [r1, r2] = await Promise.all([prov.ensureUser(amina), prov.ensureUser(kofi)]);
+  expect(r1.agentId).toBe("u_42");
+  expect(r2.agentId).toBe("u_43");
+  expect(getMaxInFlight()).toBe(1);
+  const sets = calls.filter((c) => c[0] === "config" && c[1] === "set").map((c) => c[2]);
+  expect(sets).toEqual(["agents.list[1].tools", "agents.list[2].tools"]);
+});
+
+test("concurrent ensureUser for the same user only provisions once", async () => {
+  const { prov, calls } = setupDelayed();
+  const [r1, r2] = await Promise.all([prov.ensureUser(amina), prov.ensureUser(amina)]);
+  expect(r1.agentId).toBe("u_42");
+  expect(r2.agentId).toBe("u_42");
+  expect(calls.filter((c) => c[0] === "agents" && c[1] === "add").length).toBe(1);
+});
+
+test("a failed provisioning rejects its caller but does not wedge the chain", async () => {
+  const { prov, registry } = setupDelayed({ failAgentId: "u_42" });
+  const failed = prov.ensureUser(amina).catch((e: unknown) => e);
+  const succeeded = prov.ensureUser(kofi);
+  const [err, rec] = await Promise.all([failed, succeeded]);
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toMatch(/agents add/);
+  expect(rec.agentId).toBe("u_43");
   expect(registry.findByUserId(42)).toBeNull();
 });

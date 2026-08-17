@@ -35,7 +35,7 @@ export function agentIdFor(tgUserId: number): string {
 }
 
 export class Provisioner {
-  private cli: CliRunner;
+  private readonly cli: CliRunner;
   private readonly registry: Registry;
   private readonly config: Config;
   private readonly templateDir: string;
@@ -106,7 +106,7 @@ export class Provisioner {
         const tmpl = readFileSync(src, "utf8");
         const body = tmpl.replaceAll("{{NAME}}", id.firstName || id.username).replaceAll("{{USERNAME}}", id.username);
         writeFileSync(path.join(workspace, "USER.md"), body);
-      } else if (name.endsWith(".md")) {
+      } else if (name.endsWith(".md") && name !== "MEMORY.md") {
         copyFileSync(src, path.join(workspace, name)); // overwrite OpenClaw's default seed
       }
     }
