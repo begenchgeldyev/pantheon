@@ -120,3 +120,19 @@ Because `agents.*`, `tools.*` and `mcp.*` hot-reload, no gateway restart is need
   cron list unaffected; `openclaw sandbox explain --agent u_<tgid>` shows fs
   workspace-only and exec allowlist; asking the agent to read `~/.openclaw/workspace/MEMORY.md`
   is refused.
+
+## Amendments (2026-08-17, after CLI verification on kz)
+
+- `openclaw agents add` seeds default workspace files (`AGENTS.md`, `SOUL.md`, `TOOLS.md`,
+  `IDENTITY.md`, `USER.md`, `HEARTBEAT.md`, `BOOTSTRAP.md`). The provisioner therefore
+  **overwrites** those with the template and deletes `BOOTSTRAP.md`; only `MEMORY.md` is
+  never overwritten.
+- Exec allowlist is per-agent (`openclaw approvals allowlist add <pattern> --agent <id>`);
+  verified live: `exec` outside the allowlist → `exec denied: allowlist miss`; `read` outside
+  the workspace → `Path escapes sandbox root`.
+- User-agent policy also denies `group:automation` (the built-in `cron`/`gateway` tools) and
+  sets `elevated.enabled=false`; reminders go only through `remind*` helpers, which gain
+  `remind-cron`, `remind-list`, `remind-rm` so agents never call `openclaw` directly.
+  The same helper-only `TOOLS.md` is installed into the `main` workspace.
+- `/notify` treats a payload without `agentId` as `main` (jobs created before this change).
+  Safe because user agents cannot craft raw payloads.
