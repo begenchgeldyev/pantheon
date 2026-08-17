@@ -1,36 +1,37 @@
 # Pantheon
 
-Pantheon is a small, private **Telegram gateway to [OpenClaw]**. It receives
-your Telegram messages, checks that they came from you, routes them to the
-right OpenClaw agent, runs a single agent turn via the OpenClaw CLI, and sends
-the reply back to Telegram.
-
-Pantheon is deliberately thin. Agents, memory, reasoning, tools, and model
-access all stay inside OpenClaw.
+Pantheon is a small **Telegram gateway to [OpenClaw]** for a hand-picked group
+of people. Each allowed Telegram user gets their own isolated OpenClaw agent
+(workspace, memory, sessions, reminders); Pantheon authenticates by Telegram
+username, provisions the agent on first contact, routes turns to it via the
+OpenClaw CLI and delivers scheduled reminders back to the right chat.
 
 ## Architecture
 
 ```text
-Telegram
-   │  (long polling)
+Telegram (allow-listed usernames)
+   │
    ▼
-Pantheon ── auth (allowlist) ── Router ── OpenClaw CLI ──► OpenClaw Gateway
-                                                              ├── Hermes
-                                                              ├── … other agents
-                                                              └── future agents
+Pantheon ── auth ── registry (sqlite) ── provisioner ── Router ── OpenClaw CLI ──► OpenClaw Gateway
+                                                                                    ├── main   (owner)
+                                                                                    ├── u_<id> (user A)
+                                                                                    └── u_<id> (user B)
+Reminders: agent ──exec remind*──► openclaw cron ──POST /notify {agentId,text}──► Pantheon ──► Telegram
 ```
 
-Module responsibilities (`src/`):
-
-| File           | Responsibility                                                   |
-| -------------- | ---------------------------------------------------------------- |
-| `index.ts`     | Wire everything together, start polling, graceful shutdown.      |
-| `config.ts`    | Load & validate environment variables at startup.                |
-| `telegram.ts`  | grammY bot: auth, commands, typing indicator, message splitting. |
-| `router.ts`    | Agent selection + session-key scheme. No Telegram/OpenClaw guts. |
-| `openclaw.ts`  | The **only** place that talks to OpenClaw (CLI adapter).         |
-| `logger.ts`    | Structured JSON logging (metadata only, never secrets).          |
-| `types.ts`     | Shared types / the `OpenClawClient` interface.                   |
+| File               | Responsibility                                                        |
+| ------------------ | --------------------------------------------------------------------- |
+| `index.ts`         | Wire everything together, start polling, graceful shutdown.           |
+| `config.ts`        | Load & validate environment variables at startup.                     |
+| `telegram.ts`      | grammY bot: username auth, ensure-user, typing indicator, splitting.  |
+| `registry.ts`      | SQLite: Telegram user ↔ OpenClaw agent.                               |
+| `provisioner.ts`   | Create an isolated agent (CLI + template + tool policy + allowlist).  |
+| `router.ts`        | Agent lookup + session-key scheme.                                    |
+| `openclaw.ts`      | Runs one agent turn via the OpenClaw CLI.                             |
+| `openclaw-cli.ts`  | Generic CLI runner for management commands.                           |
+| `notify.ts`        | Loopback endpoint: `{agentId,text}` → the owning user's chat.         |
+| `workspace-template/` | Persona files seeded into every new user workspace.               |
+| `bin/`             | `remind*` helpers installed to `~/bin` (the only exec user agents may run). |
 
 ## Requirements
 
@@ -47,15 +48,13 @@ Pantheon and OpenClaw, and no database.
 2. Send `/newbot`, choose a name and a username ending in `bot`.
 3. Copy the **token** it gives you — this goes in `TELEGRAM_BOT_TOKEN`.
 
-## 2. Find your numeric Telegram user id
+## 2. Users
 
-Usernames can change, so Pantheon authenticates on your **numeric id**.
-
-- Message [@userinfobot](https://t.me/userinfobot) (or `@RawDataBot`) and read
-  the `id` it returns, **or**
-- After first configuring Pantheon, send it a message and read the
-  `authorized message received` / `rejected unauthorized message` log line —
-  it contains the `fromId`. Put that in `TELEGRAM_ALLOWED_USER_ID`.
+Add Telegram usernames (without `@`) to `TELEGRAM_ALLOWED_USERNAMES`; the owner
+(`TELEGRAM_OWNER_USERNAME`) keeps the existing `main` agent. Everyone else gets
+`u_<telegram id>` on their first message. Users need a Telegram username set.
+Removing a username locks the user out on the next restart; delete their agent
+with `openclaw agents delete u_<id>` if you want the data gone.
 
 ## 3. Install
 
@@ -73,15 +72,13 @@ $EDITOR .env          # fill in the values below
 chmod 600 .env        # the token is a secret
 ```
 
-| Variable                   | Required | Meaning                                                       |
-| -------------------------- | :------: | ------------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`       |    ✅    | BotFather token (secret).                                     |
-| `TELEGRAM_ALLOWED_USER_ID` |    ✅    | Your numeric Telegram user id.                                |
-| `DEFAULT_AGENT`            |    ✅    | Agent used when none is selected (e.g. `hermes`).             |
-| `OPENCLAW_AGENTS`          |          | Comma-separated known agents. `DEFAULT_AGENT` always included.|
-| `OPENCLAW_BIN`             |          | OpenClaw CLI name or path. Default `openclaw`.                |
-| `OPENCLAW_TIMEOUT_SECONDS` |          | Per-turn timeout. Default `120`.                              |
-| `LOG_LEVEL`                |          | `debug`\|`info`\|`warn`\|`error`. Default `info`.             |
+| Variable                     | Required | Meaning                                                    |
+| ---------------------------- | :------: | ---------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN`         |    ✅    | BotFather token (secret).                                  |
+| `TELEGRAM_ALLOWED_USERNAMES` |    ✅    | Comma-separated usernames allowed to use the bot.          |
+| `TELEGRAM_OWNER_USERNAME`    |    ✅    | Username mapped to agent `main`.                           |
+| `NOTIFY_SECRET`              |    ✅    | Shared secret for `POST /notify`.                          |
+| `OPENCLAW_BIN`, `OPENCLAW_STATE_DIR`, `OPENCLAW_TIMEOUT_SECONDS`, `PANTHEON_DATA_DIR`, `LOG_LEVEL`, `NOTIFY_HOST`, `NOTIFY_PORT` | | See `.env.example`. |
 
 `.env` is git-ignored and never committed. The only secret is the bot token —
 the OpenClaw CLI runs locally under your own credentials.
@@ -95,22 +92,14 @@ bun test           # unit tests
 bun run start      # run once (foreground)
 ```
 
-## Commands
+## 6. Reminder helpers
 
-| Command               | Behaviour                                                        |
-| --------------------- | --------------------------------------------------------------- |
-| `/start`              | Confirm Pantheon is connected; show the active agent.           |
-| `/help`               | List commands.                                                  |
-| `/agents`             | List the configured agents.                                     |
-| `/agent <name>`       | Select the active agent for this chat.                          |
-| `/<agent> <message>`  | Send **one** message to a specific agent without switching.     |
-| _any other text_      | Goes to your currently selected agent (or `DEFAULT_AGENT`).     |
+`bin/remind*` must be installed to `/home/openclaw/bin` (`install -m755 bin/remind* /home/openclaw/bin/`).
+They derive the agent from the exec working directory (`workspace` → `main`,
+`workspace-<id>` → `<id>`), so a user's agent can only ever schedule reminders
+for that user.
 
-The `/<agent>` shortcuts are generated from `OPENCLAW_AGENTS` — nothing is
-hardcoded. Only agent ids that are valid Telegram commands (`[a-z0-9_]`) get a
-shortcut.
-
-## 6. Production (systemd)
+## 7. Production (systemd)
 
 `pantheon.service` is included. Before enabling it:
 
@@ -139,7 +128,7 @@ options one at a time and confirm OpenClaw still works.
 The service user must be able to run the OpenClaw CLI (same host, same
 credentials OpenClaw expects).
 
-## 7. Logs & troubleshooting
+## 8. Logs & troubleshooting
 
 Pantheon logs one JSON object per line to the journal:
 
@@ -156,7 +145,7 @@ only (user id, agent, duration, error type) — never message bodies or secrets.
 | Symptom                              | Likely cause / fix                                        |
 | ------------------------------------ | --------------------------------------------------------- |
 | Exits immediately with a config error| A required env var is missing/invalid — the message says which. |
-| Bot ignores you                      | Wrong `TELEGRAM_ALLOWED_USER_ID`; check `rejected` log.   |
+| Bot ignores you                      | Check `rejected` log; username may not be in `TELEGRAM_ALLOWED_USERNAMES`. |
 | Every reply is the generic error     | Run the OpenClaw command by hand (below) and check stderr in the log. |
 | `Could not find reply text …`        | OpenClaw's JSON shape differs — see next section.         |
 
@@ -179,8 +168,9 @@ openclaw agent \
   conversation. OpenClaw owns the actual memory behind that key, so Pantheon
   stores no history and needs no database. OpenClaw isolates sessions per agent
   when `--agent` is given, so one key works across agents.
-- **Selected agent** is kept in memory only (a `chat → agent` map). A restart
-  just falls back to `DEFAULT_AGENT`; nothing important is lost.
+- **Agent mapping:** each Telegram user is mapped to an OpenClaw agent in the
+  SQLite registry. The owner gets agent `main`; other users get `u_<id>`. A user
+  is provisioned the first time they message the bot.
 - **Response parsing** lives in one function, `extractResponseText()`, because
   the exact `--json` shape has **not yet been verified against a live
   OpenClaw**. It tries the common field names and fails loudly (logging the
@@ -199,16 +189,5 @@ openclaw agent --agent hermes --session-key pantheon-test \
 If the reply text isn't found automatically, note which key holds it and adjust
 the field list in `extractResponseText()` (`src/openclaw.ts`). That is the only
 place response-shape assumptions live.
-
-## 8. Adding more agents later
-
-1. Make sure the agent exists in OpenClaw.
-2. Add its id to `OPENCLAW_AGENTS` in `.env` (comma-separated).
-3. Restart: `sudo systemctl restart pantheon`.
-
-The agent then appears in `/agents`, can be chosen with `/agent <id>`, and (if
-its id is a valid command) gets a `/<id> …` one-shot shortcut. Automatic
-"smart" routing can later be added inside `Router.route()` without touching the
-Telegram or OpenClaw layers.
 
 [OpenClaw]: #
