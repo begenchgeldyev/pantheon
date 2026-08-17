@@ -12,8 +12,9 @@ export class ContainerBinding<T> {
             return this.registration.factory(container);
         }
 
-        if (this.resolved) {
+        if (!this.resolved) {
             this.instance = this.registration.factory(container);
+            this.resolved = true;
         }
 
         return this.instance;
