@@ -21,8 +21,6 @@ function main(): void {
     .setMyCommands([
       { command: "start", description: "Check the connection" },
       { command: "help", description: "Show available commands" },
-      { command: "agents", description: "List known agents" },
-      { command: "agent", description: "Select the active agent" },
     ])
     .catch((err) => logger.warn("failed to set commands", { error: String(err) }));
 
@@ -46,8 +44,8 @@ function main(): void {
       onStart: (me) =>
         logger.info("bot started", {
           username: me.username,
-          defaultAgent: config.defaultAgent,
-          agents: config.agents,
+          allowedUsers: config.allowedUsernames.size,
+          owner: config.ownerUsername,
         }),
     })
     .catch((err) => {
