@@ -1,25 +1,24 @@
-import type { LoggerSeverity } from './logger';
-
+import path from "node:path";
+import type { LoggerSeverity } from "./logger";
 
 export type Config = {
   /** Telegram bot token from BotFather. Secret. */
   botToken: string;
-  /** Numeric Telegram user id allowed to talk to the bot. */
-  allowedUserId: number;
-  /** Agent used when the user hasn't explicitly selected one. */
-  defaultAgent: string;
-  /** All agents Pantheon knows about (always includes defaultAgent). */
-  agents: string[];
+  /** Telegram usernames allowed to talk to the bot (lower-case, no '@'). */
+  allowedUsernames: Set<string>;
+  /** Username mapped to the pre-existing `main` agent. Must be allowed. */
+  ownerUsername: string;
   /** Executable name or path for the OpenClaw CLI. */
   openclawBin: string;
+  /** OpenClaw state dir (holds workspace*, agents/, openclaw.json). */
+  openclawStateDir: string;
   /** Hard timeout for a single OpenClaw turn, in milliseconds. */
   openclawTimeoutMs: number;
+  /** Directory for Pantheon's own data (users.sqlite). */
+  dataDir: string;
   logLevel: LoggerSeverity;
-  /** Loopback interface for the internal notify endpoint. */
   notifyHost: string;
-  /** TCP port for the internal notify endpoint. */
   notifyPort: number;
-  /** Shared secret required in X-Pantheon-Secret for POST /notify. */
   notifySecret: string;
 };
 
@@ -27,83 +26,66 @@ class ConfigError extends Error {
   override name = "ConfigError";
 }
 
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new ConfigError(`Missing required environment variable: ${name}`);
-  }
+export function normalizeUsername(raw: string): string {
+  return raw.trim().replace(/^@/, "").toLowerCase();
+}
+
+type Env = Record<string, string | undefined>;
+
+function required(env: Env, name: string): string {
+  const value = env[name]?.trim();
+  if (!value) throw new ConfigError(`Missing required environment variable: ${name}`);
   return value;
 }
 
-function optional(name: string, fallback: string): string {
-  const value = process.env[name]?.trim();
+function optional(env: Env, name: string, fallback: string): string {
+  const value = env[name]?.trim();
   return value ? value : fallback;
 }
 
 function parsePositiveInt(name: string, raw: string): number {
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) {
-    throw new ConfigError(
-      `Environment variable ${name} must be a positive integer, got: ${raw}`,
-    );
+    throw new ConfigError(`Environment variable ${name} must be a positive integer, got: ${raw}`);
   }
   return n;
 }
 
 function parseLogLevel(raw: string): LoggerSeverity {
-  if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") {
-    return raw;
-  }
-  throw new ConfigError(
-    `LOG_LEVEL must be one of debug|info|warn|error, got: ${raw}`,
-  );
+  if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") return raw;
+  throw new ConfigError(`LOG_LEVEL must be one of debug|info|warn|error, got: ${raw}`);
 }
 
-/**
- * Load and validate configuration. Throws ConfigError with an actionable
- * message if anything required is missing or malformed.
- */
-export function loadConfig(): Config {
-  const botToken = required("TELEGRAM_BOT_TOKEN");
-  const allowedUserId = parsePositiveInt(
-    "TELEGRAM_ALLOWED_USER_ID",
-    required("TELEGRAM_ALLOWED_USER_ID"),
+export function loadConfig(env: Env = process.env): Config {
+  const botToken = required(env, "TELEGRAM_BOT_TOKEN");
+
+  const allowedUsernames = new Set(
+    required(env, "TELEGRAM_ALLOWED_USERNAMES")
+      .split(",")
+      .map(normalizeUsername)
+      .filter((u) => u.length > 0),
   );
-  const defaultAgent = required("DEFAULT_AGENT");
+  if (allowedUsernames.size === 0) {
+    throw new ConfigError("TELEGRAM_ALLOWED_USERNAMES must contain at least one username");
+  }
 
-  // OPENCLAW_AGENTS is an optional comma-separated allowlist. The default
-  // agent is always included so it can never be "unknown".
-  const configuredAgents = optional("OPENCLAW_AGENTS", "")
-    .split(",")
-    .map((a) => a.trim())
-    .filter((a) => a.length > 0);
-  const agents = Array.from(new Set([defaultAgent, ...configuredAgents]));
+  const ownerUsername = normalizeUsername(required(env, "TELEGRAM_OWNER_USERNAME"));
+  if (!allowedUsernames.has(ownerUsername)) {
+    throw new ConfigError("TELEGRAM_OWNER_USERNAME must be one of TELEGRAM_ALLOWED_USERNAMES");
+  }
 
-  const openclawBin = optional("OPENCLAW_BIN", "openclaw");
+  const openclawBin = optional(env, "OPENCLAW_BIN", "openclaw");
+  const openclawStateDir = optional(env, "OPENCLAW_STATE_DIR", "/home/openclaw/.openclaw");
   const openclawTimeoutMs =
-    parsePositiveInt(
-      "OPENCLAW_TIMEOUT_SECONDS",
-      optional("OPENCLAW_TIMEOUT_SECONDS", "120"),
-    ) * 1000;
-  const logLevel = parseLogLevel(optional("LOG_LEVEL", "info"));
-
-  const notifyHost = optional("NOTIFY_HOST", "127.0.0.1");
-  const notifyPort = parsePositiveInt(
-    "NOTIFY_PORT",
-    optional("NOTIFY_PORT", "8477"),
-  );
-  const notifySecret = required("NOTIFY_SECRET");
+    parsePositiveInt("OPENCLAW_TIMEOUT_SECONDS", optional(env, "OPENCLAW_TIMEOUT_SECONDS", "120")) * 1000;
+  const dataDir = path.resolve(optional(env, "PANTHEON_DATA_DIR", "./data"));
+  const logLevel = parseLogLevel(optional(env, "LOG_LEVEL", "info"));
+  const notifyHost = optional(env, "NOTIFY_HOST", "127.0.0.1");
+  const notifyPort = parsePositiveInt("NOTIFY_PORT", optional(env, "NOTIFY_PORT", "8477"));
+  const notifySecret = required(env, "NOTIFY_SECRET");
 
   return {
-    botToken,
-    allowedUserId,
-    defaultAgent,
-    agents,
-    openclawBin,
-    openclawTimeoutMs,
-    logLevel,
-    notifyHost,
-    notifyPort,
-    notifySecret,
+    botToken, allowedUsernames, ownerUsername, openclawBin, openclawStateDir,
+    openclawTimeoutMs, dataDir, logLevel, notifyHost, notifyPort, notifySecret,
   };
 }
