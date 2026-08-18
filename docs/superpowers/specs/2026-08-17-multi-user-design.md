@@ -159,3 +159,14 @@ Because `agents.*`, `tools.*` and `mcp.*` hot-reload, no gateway restart is need
   reminders resolve to `main` immediately.
 - Pantheon must run as the OpenClaw OS user (`openclaw`), since it writes workspaces, wrappers,
   OpenClaw config and approvals.
+
+## Status
+
+Deployed to kz on 2026-08-18 (branch `multi-user` @ 1c4cc95 + docs), owner-only
+(`TELEGRAM_ALLOWED_USERNAMES=begench`). Smoke passed: owner `/notify` legacy + agentId
+payloads delivered, 404/401 paths correct, `remind-in` via the `main` wrapper fired and
+was delivered after 1 min, job auto-deleted. Real provisioner exercised with a synthetic
+user (`u_999001`, removed afterwards): agent + policy + allowlist + wrappers + template
+created; live probes confirmed own wrapper works, owner wrapper / impl dir / other paths
+denied, `workdir` does not change attribution, owner files unreadable. Second-user
+Telegram smoke pending until a second username is allow-listed.
