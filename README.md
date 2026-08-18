@@ -267,3 +267,44 @@ the field list in `extractResponseText()` (`src/openclaw.ts`). That is the only
 place response-shape assumptions live.
 
 [OpenClaw]: #
+
+## Gods
+
+Pantheon can host more than one god behind the single bot. The owner talks to
+**Hermes** (`main`, dates & reminders) by default and may summon others.
+
+- `/gods` — list the gods you may summon (the active one is marked ▸).
+- `/hermes [message]`, `/athena [message]`, … — switch to a god (and optionally
+  speak to it in the same message). The choice is sticky per chat until you
+  switch again.
+- Send a **file** (e.g. your résumé) and it lands in the active god's workspace
+  `inbox/`, then that god is told about it.
+
+Non-owner users are unaffected: they have exactly one god (their own agent) and
+see no god commands.
+
+### Adding a god
+
+1. Create the agent and its workspace:
+   ```bash
+   openclaw agents add <id> --workspace ~/.openclaw/workspace-<id> --non-interactive
+   rm -f ~/.openclaw/workspace-<id>/BOOTSTRAP.md
+   ```
+2. Install its persona from `gods/<id>/` into that workspace (render `{{NAME}}` /
+   `{{USERNAME}}` in `USER.md`).
+3. Grant it the tools it needs and deny what it must not touch, e.g. for a
+   web-using god keep Hermes's calendar to Hermes:
+   ```bash
+   openclaw config set 'agents.list[<n>].tools' '{deny:["google-calendar__*"]}'
+   ```
+4. Add its id to `PANTHEON_OWNER_GODS` and restart Pantheon.
+
+### Athena — the vacancy hunt (Phase 1)
+
+`gods/athena/` is the job-hunt god. She is **web-enabled** (fetches job-board
+JSON APIs — Greenhouse/Lever/Ashby boards, Remotive, RemoteOK, We Work Remotely,
+HN "Who's Hiring") and configured entirely by conversation: tell her what you're
+hunting and send your résumé, and she records it in her own workspace. Phase 1
+is **on-demand** — she finds and ranks real roles and weaves a tailored résumé +
+cover letter on request. Proactive scheduled updates and any auto-apply are
+later phases (auto-submission is deliberately not built here).
