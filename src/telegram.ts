@@ -7,7 +7,7 @@
 
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { Bot, InputFile, type Context } from "grammy";
+import { Bot, type Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import { Marked, type Tokens } from "marked";
 import { normalizeUsername, type Config } from "./config";
@@ -18,7 +18,6 @@ import type { Provisioner } from "./provisioner";
 import type { Registry, UserRecord } from "./registry";
 import type { Router } from "./router";
 import type { Transcriber } from "./transcribe";
-import type { Synthesizer } from "./tts";
 
 // Display names for the gods, with their emblems.
 const GOD_NAMES: Record<string, string> = { main: "Hermes 🔔", athena: "Athena 🦉", zeus: "Zeus ⚡" };
@@ -192,11 +191,10 @@ export function createBot(
   registry: Registry,
   logger: Logger,
   /** `botInfo` skips the getMe call at startup (tests only); `transcriber` enables voice notes. */
-  opts: { botInfo?: UserFromGetMe; transcriber?: Transcriber; synthesizer?: Synthesizer } = {},
+  opts: { botInfo?: UserFromGetMe; transcriber?: Transcriber } = {},
 ): Bot {
   const bot = new Bot(config.botToken, opts.botInfo ? { botInfo: opts.botInfo } : undefined);
   const transcriber = opts.transcriber;
-  const synthesizer = opts.synthesizer;
 
   // --- Authentication: allow-listed Telegram usernames only. ---
   bot.use(async (ctx, next) => {
@@ -328,7 +326,7 @@ export function createBot(
     if (!transcript) return ctx.reply("🎙️ I couldn't make out that voice note — try again?");
     logger.info("voice transcribed", { chatId: ctx.chat!.id, chars: transcript.length });
     await ctx.reply(`🎙️ ${transcript}`);
-    await handleTurn(ctx, router, logger, transcript, { synthesizer, voiceReply: true });
+    await handleTurn(ctx, router, logger, transcript);
   });
 
   bot.on("message:text", async (ctx) => {
@@ -345,12 +343,7 @@ export function createBot(
   return bot;
 }
 
-type TurnOpts = { synthesizer?: Synthesizer; voiceReply?: boolean };
-
-// Beyond this length a single voice note is unwieldy; send text only.
-const VOICE_REPLY_MAX_CHARS = 900;
-
-async function handleTurn(ctx: Context, router: Router, logger: Logger, text: string, tts: TurnOpts = {}): Promise<void> {
+async function handleTurn(ctx: Context, router: Router, logger: Logger, text: string): Promise<void> {
   const chatId = ctx.chat?.id;
   const userId = ctx.from?.id;
   if (chatId === undefined || userId === undefined) return;
@@ -368,15 +361,6 @@ async function handleTurn(ctx: Context, router: Router, logger: Logger, text: st
       return;
     }
     await sendReply(ctx, result.reply, logger);
-    // Reply-in-kind: if the user spoke, the god speaks back (short replies only).
-    if (tts.voiceReply && tts.synthesizer && result.reply.length <= VOICE_REPLY_MAX_CHARS) {
-      try {
-        const ogg = await tts.synthesizer(result.reply, result.agentId);
-        await ctx.replyWithVoice(new InputFile(ogg, "reply.ogg"));
-      } catch (err) {
-        logger.warn("voice reply failed", { agentId: result.agentId, error: err instanceof Error ? err.message : String(err) });
-      }
-    }
   } catch (err) {
     logger.error("openclaw request failed", { userId, chatId, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) });
     await ctx.reply(USER_ERROR);

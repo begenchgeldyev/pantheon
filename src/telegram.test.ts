@@ -305,7 +305,7 @@ function voiceUpdate(o: { userId: number; username: string; duration?: number; u
   } as Update;
 }
 
-test("a voice note is transcribed, echoed, and routed as text", async () => {
+test("a voice note is transcribed, echoed, and routed as text (no voice reply)", async () => {
   const config = loadConfig({
     TELEGRAM_BOT_TOKEN: "123:fake", TELEGRAM_ALLOWED_USERNAMES: "begench",
     TELEGRAM_OWNER_USERNAME: "begench", NOTIFY_SECRET: "s", GROQ_API_KEY: "gsk_x",
@@ -328,7 +328,6 @@ test("a voice note is transcribed, echoed, and routed as text", async () => {
       can_manage_bots: false, supports_join_request_queries: false,
     },
     transcriber: async () => "remind me to call the bank tomorrow",
-    synthesizer: async () => Buffer.from("OGGDATA"),
   });
   const api: string[] = [];
   const methods: string[] = [];
@@ -347,7 +346,7 @@ test("a voice note is transcribed, echoed, and routed as text", async () => {
   }
   expect(api.some((t) => t.includes("call the bank"))).toBe(true);
   expect(routed.at(-1)).toEqual({ userId: 1, chatId: 1, text: "remind me to call the bank tomorrow" });
-  expect(methods).toContain("sendVoice"); // reply-in-kind: spoke back
+  expect(methods).not.toContain("sendVoice");
 });
 
 test("a voice note without a configured transcriber is politely refused", async () => {
