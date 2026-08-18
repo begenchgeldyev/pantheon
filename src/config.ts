@@ -10,6 +10,8 @@ export type Config = {
   ownerUsername: string;
   /** Extra OpenClaw agent ids the owner may summon (besides `main`), e.g. `athena`. */
   ownerGods: string[];
+  /** The router/front-door god (e.g. `zeus`): the default when intent is unclear. Empty = none. */
+  routerAgent: string;
   /** Executable name or path for the OpenClaw CLI. */
   openclawBin: string;
   /** OpenClaw state dir (holds workspace*, agents/, openclaw.json). */
@@ -95,6 +97,11 @@ export function loadConfig(env: Env = process.env): Config {
     }
   }
 
+  const routerAgent = optional(env, "PANTHEON_ROUTER", "").trim();
+  if (routerAgent && !/^[a-z][a-z0-9_]*$/.test(routerAgent)) {
+    throw new ConfigError(`PANTHEON_ROUTER is not a valid agent id: ${routerAgent}`);
+  }
+
   const openclawBin = optional(env, "OPENCLAW_BIN", "openclaw");
   const openclawStateDir = optional(env, "OPENCLAW_STATE_DIR", "/home/openclaw/.openclaw");
   const openclawTimeoutMs =
@@ -110,7 +117,7 @@ export function loadConfig(env: Env = process.env): Config {
   const notifySecret = required(env, "NOTIFY_SECRET");
 
   return {
-    botToken, allowedUsernames, ownerUsername, ownerGods, openclawBin, openclawStateDir,
+    botToken, allowedUsernames, ownerUsername, ownerGods, routerAgent, openclawBin, openclawStateDir,
     openclawTimeoutMs, dataDir, binDir, remindImplDir, logLevel, notifyHost,
     notifyPort, notifySecret,
   };

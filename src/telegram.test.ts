@@ -54,7 +54,7 @@ function harness(opts: { failWelcome?: boolean } = {}) {
   const config = loadConfig({
     TELEGRAM_BOT_TOKEN: "123:fake", TELEGRAM_ALLOWED_USERNAMES: "begench,amina",
     TELEGRAM_OWNER_USERNAME: "begench", NOTIFY_SECRET: "s",
-    PANTHEON_OWNER_GODS: "athena", PANTHEON_DATA_DIR: "/tmp/pantheon-test",
+    PANTHEON_OWNER_GODS: "athena", PANTHEON_ROUTER: "zeus", PANTHEON_DATA_DIR: "/tmp/pantheon-test",
   });
   const registry = new Registry(":memory:");
   const ensured: TelegramIdentity[] = [];
@@ -70,13 +70,13 @@ function harness(opts: { failWelcome?: boolean } = {}) {
       const rec = registry.findByUserId(userId);
       if (!rec) return "unknown";
       const sel = registry.getChatSelection(chatId);
-      const gods = rec.username === "begench" ? ["main", "athena"] : [rec.agentId];
+      const gods = rec.username === "begench" ? ["zeus", "main", "athena"] : [rec.agentId];
       return sel && gods.includes(sel) ? sel : gods[0]!;
     },
     route: async (req: { userId: number; chatId: number; text: string }) => {
       routed.push(req);
       const agentId = (registry.findByUserId(req.userId)?.username === "begench")
-        ? (registry.getChatSelection(req.chatId) ?? "main")
+        ? (registry.getChatSelection(req.chatId) ?? "zeus")
         : `u_${req.userId}`;
       return { agentId, reply: "pong" };
     },
@@ -283,4 +283,12 @@ test("an oversize document is rejected without writing", async () => {
   await h.bot.handleUpdate(docUpdate({ userId: 1, username: "begench", fileName: "big.pdf", fileSize: 999_000_000 }));
   expect(h.sent().at(-1)).toContain("too large");
   expect(h.routed).toEqual([]);
+});
+
+test("owner can summon the router god (zeus)", async () => {
+  const h = harness();
+  h.registry.insert({ tgUserId: 1, username: "begench", chatId: 1, agentId: "main" });
+  await h.bot.handleUpdate(textUpdate({ userId: 1, username: "begench", text: "/zeus" }));
+  expect(h.registry.getChatSelection(1)).toBe("zeus");
+  expect(h.sent().at(-1)).toContain("Zeus");
 });

@@ -8,6 +8,7 @@ const config = loadConfig({
   TELEGRAM_ALLOWED_USERNAMES: "begench,amina",
   TELEGRAM_OWNER_USERNAME: "begench",
   PANTHEON_OWNER_GODS: "athena",
+  PANTHEON_ROUTER: "zeus",
   NOTIFY_SECRET: "s",
   OPENCLAW_STATE_DIR: "/state",
 });
@@ -16,7 +17,7 @@ const owner: UserRecord = { tgUserId: 1, username: "begench", chatId: 1, agentId
 const user: UserRecord = { tgUserId: 2, username: "amina", chatId: 2, agentId: "u_2", createdAt: "", lastSeen: "" };
 
 test("godsFor: owner gets Hermes + extra gods; others get only their own", () => {
-  expect(godsFor(owner, config)).toEqual(["main", "athena"]);
+  expect(godsFor(owner, config)).toEqual(["zeus", "main", "athena"]);
   expect(godsFor(user, config)).toEqual(["u_2"]);
   expect(isOwner(owner, config)).toBe(true);
   expect(isOwner(user, config)).toBe(false);
@@ -24,8 +25,8 @@ test("godsFor: owner gets Hermes + extra gods; others get only their own", () =>
 
 test("activeAgent honours a valid selection, else falls back to the default god", () => {
   expect(activeAgent(owner, config, "athena")).toBe("athena");
-  expect(activeAgent(owner, config, null)).toBe("main");
-  expect(activeAgent(owner, config, "zeus")).toBe("main"); // not summonable -> default
+  expect(activeAgent(owner, config, null)).toBe("zeus"); // router is the cold-start default
+  expect(activeAgent(owner, config, "main")).toBe("main"); // an explicit specialist selection sticks
   expect(activeAgent(user, config, "athena")).toBe("u_2"); // user can't reach athena
 });
 

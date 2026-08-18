@@ -220,7 +220,7 @@ export function createBot(
     return ctx.reply(`You now speak with ${godName(agentId)}.`);
   };
   bot.command("hermes", summon(HERMES_AGENT_ID));
-  for (const g of config.ownerGods) {
+  for (const g of [...(config.routerAgent ? [config.routerAgent] : []), ...config.ownerGods]) {
     if (/^[a-z][a-z0-9_]*$/.test(g)) bot.command(g, summon(g));
   }
 

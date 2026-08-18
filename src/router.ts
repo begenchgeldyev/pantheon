@@ -5,10 +5,13 @@
 // owner, their own agent for everyone else). See gods.ts.
 
 import type { Config } from "./config";
-import { activeAgent } from "./gods";
+import { activeAgent, godsFor, isOwner } from "./gods";
+import { classifyIntent } from "./intent";
 import type { Logger } from "./logger/logger";
 import type { Registry } from "./registry";
 import type { OpenClawClient } from "./types";
+
+const ATHENA_AGENT_ID = "athena";
 
 export type RouteRequest = { userId: number; chatId: number; text: string };
 export type RouteResult = { agentId: string; reply: string };
@@ -38,7 +41,25 @@ export class Router {
   }
 
   async route(req: RouteRequest): Promise<RouteResult> {
-    const agentId = this.activeAgentFor(req.userId, req.chatId);
+    const rec = this.registry.findByUserId(req.userId);
+    if (!rec) throw new RouterError(`no agent registered for user ${req.userId}`);
+
+    let agentId = activeAgent(rec, this.config, this.registry.getChatSelection(req.chatId));
+
+    // Zeus's judgment: for the owner, a message with a clear specialist intent
+    // is dispatched to that god and the choice sticks. No clear signal → stay
+    // with whichever god the chat is already on (Zeus by default). Non-owner
+    // users have a single god and are never re-routed.
+    if (isOwner(rec, this.config)) {
+      const athenaId = godsFor(rec, this.config).includes(ATHENA_AGENT_ID) ? ATHENA_AGENT_ID : null;
+      const intent = classifyIntent(req.text, athenaId);
+      if (intent && intent !== agentId) {
+        this.registry.setChatSelection(req.chatId, intent);
+        this.logger.info("router switched god by intent", { chatId: req.chatId, from: agentId, to: intent });
+        agentId = intent;
+      }
+    }
+
     const sessionKey = this.buildSessionKey(req.userId, req.chatId);
     this.logger.debug("router dispatch", { agentId, sessionKey });
     const reply = await this.client.sendMessage({ agentId, message: req.text, sessionKey });

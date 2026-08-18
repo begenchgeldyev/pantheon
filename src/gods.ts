@@ -15,10 +15,19 @@ export function isOwner(user: UserRecord, config: Config): boolean {
   return user.username === config.ownerUsername;
 }
 
-/** Agents this user may summon, in display order (first is the default). */
+/**
+ * Agents this user may summon, in display order. The first entry is the default
+ * god a chat lands on when it has made no explicit choice — the router (Zeus)
+ * when one is configured, otherwise Hermes.
+ */
 export function godsFor(user: UserRecord, config: Config): string[] {
-  if (isOwner(user, config)) return [HERMES_AGENT_ID, ...config.ownerGods];
-  return [user.agentId];
+  if (!isOwner(user, config)) return [user.agentId];
+  const ordered = [
+    ...(config.routerAgent ? [config.routerAgent] : []),
+    HERMES_AGENT_ID,
+    ...config.ownerGods,
+  ];
+  return [...new Set(ordered)];
 }
 
 /**

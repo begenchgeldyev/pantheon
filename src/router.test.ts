@@ -12,6 +12,7 @@ const config = loadConfig({
   TELEGRAM_ALLOWED_USERNAMES: "begench,amina",
   TELEGRAM_OWNER_USERNAME: "begench",
   PANTHEON_OWNER_GODS: "athena",
+  PANTHEON_ROUTER: "zeus",
   NOTIFY_SECRET: "s",
 });
 
@@ -41,7 +42,7 @@ test("routes to the user's own agent by default", async () => {
   const result = await router.route({ userId: 42, chatId: 42, text: "hi" });
   expect(result).toEqual({ agentId: "u_42", reply: "reply from u_42" });
   expect(calls[0]).toEqual({ agentId: "u_42", message: "hi", sessionKey: "telegram:42:42" });
-  expect(router.activeAgentFor(1, 1)).toBe("main");
+  expect(router.activeAgentFor(1, 1)).toBe("zeus"); // owner cold-start default is the router
 });
 
 test("owner's selected god is honoured", async () => {
@@ -64,4 +65,33 @@ test("a non-summonable selection falls back to the default god", async () => {
 test("unregistered user is rejected", async () => {
   const router = new Router(recordingClient().client, registryWith(), config, silentLogger);
   await expect(router.route({ userId: 99, chatId: 99, text: "hi" })).rejects.toBeInstanceOf(RouterError);
+});
+
+test("owner intent routing: a job message is dispatched to Athena and sticks", async () => {
+  const { client, calls } = recordingClient();
+  const registry = registryWith();
+  const router = new Router(client, registry, config, silentLogger);
+  const r1 = await router.route({ userId: 1, chatId: 1, text: "find me a remote job" });
+  expect(r1.agentId).toBe("athena");
+  expect(registry.getChatSelection(1)).toBe("athena");
+  // a follow-up with no clear signal stays with Athena
+  const r2 = await router.route({ userId: 1, chatId: 1, text: "what about the salary?" });
+  expect(r2.agentId).toBe("athena");
+  // a clear reminder message switches to Hermes
+  const r3 = await router.route({ userId: 1, chatId: 1, text: "remind me to send it tomorrow" });
+  expect(r3.agentId).toBe("main");
+  expect(registry.getChatSelection(1)).toBe("main");
+  void calls;
+});
+
+test("ambiguous cold-start message goes to the router (zeus)", async () => {
+  const router = new Router(recordingClient().client, registryWith(), config, silentLogger);
+  const r = await router.route({ userId: 1, chatId: 1, text: "hey there" });
+  expect(r.agentId).toBe("zeus");
+});
+
+test("non-owner users are never re-routed by intent", async () => {
+  const router = new Router(recordingClient().client, registryWith(), config, silentLogger);
+  const r = await router.route({ userId: 42, chatId: 42, text: "find me a job" });
+  expect(r.agentId).toBe("u_42");
 });

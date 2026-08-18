@@ -45,3 +45,12 @@ test("ownerGods parses, dedupes, drops main", () => {
 test("ownerGods rejects invalid agent ids", () => {
   expect(() => loadConfig2({ ...baseGods, PANTHEON_OWNER_GODS: "Bad Id" })).toThrow(/PANTHEON_OWNER_GODS/);
 });
+
+import { loadConfig as loadConfig3 } from "./config";
+
+test("routerAgent parses and validates", () => {
+  const base = { TELEGRAM_BOT_TOKEN: "t", TELEGRAM_ALLOWED_USERNAMES: "b", TELEGRAM_OWNER_USERNAME: "b", NOTIFY_SECRET: "s" };
+  expect(loadConfig3({ ...base, PANTHEON_ROUTER: "zeus" }).routerAgent).toBe("zeus");
+  expect(loadConfig3(base).routerAgent).toBe("");
+  expect(() => loadConfig3({ ...base, PANTHEON_ROUTER: "Bad" })).toThrow(/PANTHEON_ROUTER/);
+});
