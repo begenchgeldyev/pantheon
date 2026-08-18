@@ -27,3 +27,21 @@ test("owner must be in the allowed list", () => {
 test("requires at least one allowed username", () => {
   expect(() => loadConfig({ ...base, TELEGRAM_ALLOWED_USERNAMES: " , " })).toThrow(/TELEGRAM_ALLOWED_USERNAMES/);
 });
+
+import { loadConfig as loadConfig2 } from "./config";
+
+const baseGods = {
+  TELEGRAM_BOT_TOKEN: "t",
+  TELEGRAM_ALLOWED_USERNAMES: "begench",
+  TELEGRAM_OWNER_USERNAME: "begench",
+  NOTIFY_SECRET: "s",
+};
+
+test("ownerGods parses, dedupes, drops main", () => {
+  expect(loadConfig2({ ...baseGods, PANTHEON_OWNER_GODS: "athena, athena ,main" }).ownerGods).toEqual(["athena"]);
+  expect(loadConfig2(baseGods).ownerGods).toEqual([]);
+});
+
+test("ownerGods rejects invalid agent ids", () => {
+  expect(() => loadConfig2({ ...baseGods, PANTHEON_OWNER_GODS: "Bad Id" })).toThrow(/PANTHEON_OWNER_GODS/);
+});

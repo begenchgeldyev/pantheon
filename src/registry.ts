@@ -47,6 +47,31 @@ export class Registry {
         last_seen  TEXT NOT NULL
       );
     `);
+    // Which god a chat is currently talking to (owner can switch between gods).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS chat_selection (
+        chat_id    INTEGER PRIMARY KEY,
+        agent_id   TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+  }
+
+  /** The agent this chat is currently pointed at, or null if never set. */
+  getChatSelection(chatId: number): string | null {
+    const row = this.db
+      .query<{ agent_id: string }, [number]>("SELECT agent_id FROM chat_selection WHERE chat_id = ?")
+      .get(chatId);
+    return row ? row.agent_id : null;
+  }
+
+  setChatSelection(chatId: number, agentId: string): void {
+    this.db
+      .query(
+        "INSERT INTO chat_selection (chat_id, agent_id, updated_at) VALUES (?, ?, ?) " +
+          "ON CONFLICT(chat_id) DO UPDATE SET agent_id = excluded.agent_id, updated_at = excluded.updated_at",
+      )
+      .run(chatId, agentId, new Date().toISOString());
   }
 
   findByUserId(tgUserId: number): UserRecord | null {

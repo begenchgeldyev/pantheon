@@ -45,7 +45,7 @@ export function initContainers(config: Config) {
   });
   container.register(RouterToken, {
     lifetime: "singleton",
-    factory: (c) => new Router(c.resolve(OpenClawToken), c.resolve(RegistryToken), c.resolve(LoggerToken)),
+    factory: (c) => new Router(c.resolve(OpenClawToken), c.resolve(RegistryToken), c.resolve(ConfigToken), c.resolve(LoggerToken)),
   });
   container.register(BotToken, {
     lifetime: "singleton",

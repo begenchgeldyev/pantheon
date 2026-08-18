@@ -27,3 +27,14 @@ test("agent id is unique", () => {
   r.insert({ tgUserId: 1, username: "a", chatId: 1, agentId: "main" });
   expect(() => r.insert({ tgUserId: 2, username: "b", chatId: 2, agentId: "main" })).toThrow();
 });
+
+import { Registry as Registry2 } from "./registry";
+
+test("chat selection is unset, settable, and updatable", () => {
+  const r = new Registry2(":memory:");
+  expect(r.getChatSelection(5)).toBeNull();
+  r.setChatSelection(5, "athena");
+  expect(r.getChatSelection(5)).toBe("athena");
+  r.setChatSelection(5, "main");
+  expect(r.getChatSelection(5)).toBe("main");
+});

@@ -8,6 +8,8 @@ export type Config = {
   allowedUsernames: Set<string>;
   /** Username mapped to the pre-existing `main` agent. Must be allowed. */
   ownerUsername: string;
+  /** Extra OpenClaw agent ids the owner may summon (besides `main`), e.g. `athena`. */
+  ownerGods: string[];
   /** Executable name or path for the OpenClaw CLI. */
   openclawBin: string;
   /** OpenClaw state dir (holds workspace*, agents/, openclaw.json). */
@@ -78,6 +80,21 @@ export function loadConfig(env: Env = process.env): Config {
     throw new ConfigError("TELEGRAM_OWNER_USERNAME must be one of TELEGRAM_ALLOWED_USERNAMES");
   }
 
+  // Extra gods the owner may summon besides Hermes (`main`). Agent ids only.
+  const ownerGods = Array.from(
+    new Set(
+      optional(env, "PANTHEON_OWNER_GODS", "")
+        .split(",")
+        .map((g) => g.trim())
+        .filter((g) => g.length > 0 && g !== "main"),
+    ),
+  );
+  for (const g of ownerGods) {
+    if (!/^[a-z][a-z0-9_]*$/.test(g)) {
+      throw new ConfigError(`PANTHEON_OWNER_GODS entry is not a valid agent id: ${g}`);
+    }
+  }
+
   const openclawBin = optional(env, "OPENCLAW_BIN", "openclaw");
   const openclawStateDir = optional(env, "OPENCLAW_STATE_DIR", "/home/openclaw/.openclaw");
   const openclawTimeoutMs =
@@ -93,7 +110,7 @@ export function loadConfig(env: Env = process.env): Config {
   const notifySecret = required(env, "NOTIFY_SECRET");
 
   return {
-    botToken, allowedUsernames, ownerUsername, openclawBin, openclawStateDir,
+    botToken, allowedUsernames, ownerUsername, ownerGods, openclawBin, openclawStateDir,
     openclawTimeoutMs, dataDir, binDir, remindImplDir, logLevel, notifyHost,
     notifyPort, notifySecret,
   };

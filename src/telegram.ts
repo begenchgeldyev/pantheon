@@ -5,14 +5,24 @@
 // the agent's Markdown) split to fit Telegram's length limit. All
 // OpenClaw/agent logic lives in the Router.
 
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import { Bot, type Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import telegramifyMarkdown from "telegramify-markdown";
 import { normalizeUsername, type Config } from "./config";
+import { isAllowedDoc, inboxPathFor } from "./documents";
+import { godsFor, HERMES_AGENT_ID } from "./gods";
 import type { Logger } from "./logger/logger";
 import type { Provisioner } from "./provisioner";
-import type { Registry } from "./registry";
+import type { Registry, UserRecord } from "./registry";
 import type { Router } from "./router";
+
+// Display names for the gods, with their emblems.
+const GOD_NAMES: Record<string, string> = { main: "Hermes 🔔", athena: "Athena 🦉", zeus: "Zeus ⚡" };
+function godName(agentId: string): string {
+  return GOD_NAMES[agentId] ?? agentId.charAt(0).toUpperCase() + agentId.slice(1);
+}
 
 // Telegram hard limit is 4096 chars; stay just under for safety.
 const TELEGRAM_MAX = 4000;
@@ -118,6 +128,10 @@ const HELP = [
   "Commands:",
   "/start — check the connection",
   "/help — show this help",
+  "/gods — list the gods you may summon",
+  "/<god> — summon a god (e.g. /hermes, /athena)",
+  "",
+  "Send me a file (e.g. your résumé) and it goes to the god you're speaking with.",
 ].join("\n");
 
 const WELCOME =
@@ -173,9 +187,72 @@ export function createBot(
   });
 
   bot.command("start", (ctx) =>
-    ctx.reply(`Pantheon is connected and ready.\nYour agent: ${router.agentFor(ctx.from!.id)}\nSend /help for commands.`),
+    ctx.reply(
+      `Pantheon is connected and ready.\nNow speaking with: ${godName(
+        router.activeAgentFor(ctx.from!.id, ctx.chat!.id),
+      )}\nSend /help for commands.`,
+    ),
   );
   bot.command("help", (ctx) => ctx.reply(HELP));
+
+  // --- Gods: the owner may summon more than one god and switch between them. ---
+  const godsMenu = (user: UserRecord, active: string): string => {
+    const gods = godsFor(user, config);
+    const lines = gods.map((g) => `${g === active ? "▸" : "·"} ${godName(g)}`).join("\n");
+    const hint = gods.length > 1 ? "\n\nSummon one with /<name> (e.g. /athena)." : "";
+    return `Gods you may summon:\n${lines}${hint}`;
+  };
+
+  bot.command("gods", (ctx) => {
+    const user = registry.findByUserId(ctx.from!.id)!;
+    return ctx.reply(godsMenu(user, router.activeAgentFor(ctx.from!.id, ctx.chat!.id)));
+  });
+
+  // `/hermes [msg]`, `/athena [msg]`, … — select a god (and optionally speak once).
+  const summon = (agentId: string) => async (ctx: Context) => {
+    const user = registry.findByUserId(ctx.from!.id)!;
+    const active = router.activeAgentFor(ctx.from!.id, ctx.chat!.id);
+    if (!godsFor(user, config).includes(agentId)) return ctx.reply(godsMenu(user, active));
+    registry.setChatSelection(ctx.chat!.id, agentId);
+    logger.info("god summoned", { userId: ctx.from!.id, chatId: ctx.chat!.id, agentId });
+    const msg = ctx.match ? String(ctx.match).trim() : "";
+    if (msg) return handleTurn(ctx, router, logger, msg);
+    return ctx.reply(`You now speak with ${godName(agentId)}.`);
+  };
+  bot.command("hermes", summon(HERMES_AGENT_ID));
+  for (const g of config.ownerGods) {
+    if (/^[a-z][a-z0-9_]*$/.test(g)) bot.command(g, summon(g));
+  }
+
+  // --- Uploaded files land in the active god's workspace inbox. ---
+  bot.on("message:document", async (ctx) => {
+    const doc = ctx.message.document;
+    const name = doc.file_name ?? "file";
+    const gate = isAllowedDoc(name, doc.file_size ?? 0);
+    if (!gate.ok) return ctx.reply(gate.reason);
+
+    const agentId = router.activeAgentFor(ctx.from!.id, ctx.chat!.id);
+    const dest = inboxPathFor(config.openclawStateDir, agentId, name);
+    try {
+      const file = await ctx.getFile();
+      if (!file.file_path) throw new Error("telegram returned no file_path");
+      const res = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`);
+      if (!res.ok) throw new Error(`download failed: ${res.status}`);
+      mkdirSync(path.dirname(dest), { recursive: true });
+      await Bun.write(dest, res);
+    } catch (err) {
+      logger.error("document intake failed", { agentId, error: err instanceof Error ? err.message : String(err) });
+      return ctx.reply("⚠️ I couldn't take that file. Please try again.");
+    }
+    const rel = `inbox/${path.basename(dest)}`;
+    logger.info("document stored", { agentId, chatId: ctx.chat!.id, file: rel });
+    await handleTurn(
+      ctx,
+      router,
+      logger,
+      `[system] The user uploaded a file into your workspace: ${rel} (${doc.mime_type ?? "unknown type"}, ${doc.file_size ?? "?"} bytes). Read it if useful, record what it is in your memory, and acknowledge it in your own voice.`,
+    );
+  });
 
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;

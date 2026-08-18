@@ -1,7 +1,11 @@
-// Message routing: which agent, which session, then delegate to OpenClawClient.
-// The agent is whatever the registry says for this Telegram user; there is no
-// per-chat selection any more (one Hermes per user).
+// Message routing: which god, which session, then delegate to OpenClawClient.
+//
+// A chat talks to its *active* god: the stored per-chat selection when it is
+// one the user may summon, otherwise the user's default god (Hermes for the
+// owner, their own agent for everyone else). See gods.ts.
 
+import type { Config } from "./config";
+import { activeAgent } from "./gods";
 import type { Logger } from "./logger/logger";
 import type { Registry } from "./registry";
 import type { OpenClawClient } from "./types";
@@ -17,6 +21,7 @@ export class Router {
   constructor(
     private readonly client: OpenClawClient,
     private readonly registry: Registry,
+    private readonly config: Config,
     private readonly logger: Logger,
   ) {}
 
@@ -25,14 +30,15 @@ export class Router {
     return `telegram:${userId}:${chatId}`;
   }
 
-  agentFor(userId: number): string {
+  /** The god this chat is currently talking to. Throws if the user is unknown. */
+  activeAgentFor(userId: number, chatId: number): string {
     const rec = this.registry.findByUserId(userId);
     if (!rec) throw new RouterError(`no agent registered for user ${userId}`);
-    return rec.agentId;
+    return activeAgent(rec, this.config, this.registry.getChatSelection(chatId));
   }
 
   async route(req: RouteRequest): Promise<RouteResult> {
-    const agentId = this.agentFor(req.userId);
+    const agentId = this.activeAgentFor(req.userId, req.chatId);
     const sessionKey = this.buildSessionKey(req.userId, req.chatId);
     this.logger.debug("router dispatch", { agentId, sessionKey });
     const reply = await this.client.sendMessage({ agentId, message: req.text, sessionKey });
