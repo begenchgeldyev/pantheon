@@ -16,7 +16,7 @@ Pantheon ── auth ── registry (sqlite) ── provisioner ── Router �
                                                                                     ├── main   (owner)
                                                                                     ├── u_<id> (user A)
                                                                                     └── u_<id> (user B)
-Reminders: agent ──exec remind*──► openclaw cron ──POST /notify {agentId,text}──► Pantheon ──► Telegram
+Reminders: agent ──exec its own remind wrapper──► openclaw cron ──POST /notify {agentId,text}──► Pantheon ──► Telegram
 ```
 
 | File               | Responsibility                                                        |
@@ -31,7 +31,8 @@ Reminders: agent ──exec remind*──► openclaw cron ──POST /notify {a
 | `openclaw-cli.ts`  | Generic CLI runner for management commands.                           |
 | `notify.ts`        | Loopback endpoint: `{agentId,text}` → the owning user's chat.         |
 | `workspace-template/` | Persona files seeded into every new user workspace.               |
-| `bin/`             | `remind*` helpers installed to `~/bin` (the only exec user agents may run). |
+| `bin/remind-impl/` | The real `remind*` helpers; take the agent id as their first argument. |
+| `bin/install-remind-wrappers` | Writes an agent's wrapper scripts (id baked in) into a directory. |
 | `container/`       | Tiny DI container wiring the modules together (`init-containers.ts`). |
 | `logger/`          | Structured JSON logging (metadata only, never secrets).           |
 | `tokens.ts`        | DI tokens.                                                        |
@@ -73,7 +74,7 @@ bun install
 ```bash
 cp .env.example .env
 $EDITOR .env          # fill in the values below
-chmod 600 .env        # the token is a secret
+chmod 600 .env        # it holds the bot token and the notify secret
 ```
 
 | Variable                     | Required | Meaning                                                    |
@@ -82,10 +83,11 @@ chmod 600 .env        # the token is a secret
 | `TELEGRAM_ALLOWED_USERNAMES` |    ✅    | Comma-separated usernames allowed to use the bot.          |
 | `TELEGRAM_OWNER_USERNAME`    |    ✅    | Username mapped to agent `main`.                           |
 | `NOTIFY_SECRET`              |    ✅    | Shared secret for `POST /notify`.                          |
-| `OPENCLAW_BIN`, `OPENCLAW_STATE_DIR`, `OPENCLAW_TIMEOUT_SECONDS`, `PANTHEON_DATA_DIR`, `LOG_LEVEL`, `NOTIFY_HOST`, `NOTIFY_PORT` | | See `.env.example`. |
+| `OPENCLAW_BIN`, `OPENCLAW_STATE_DIR`, `OPENCLAW_TIMEOUT_SECONDS`, `PANTHEON_DATA_DIR`, `PANTHEON_BIN_DIR`, `REMIND_IMPL_DIR`, `LOG_LEVEL`, `NOTIFY_HOST`, `NOTIFY_PORT` | | See `.env.example`. |
 
-`.env` is git-ignored and never committed. The only secret is the bot token —
-the OpenClaw CLI runs locally under your own credentials.
+`.env` is git-ignored and never committed. It holds two secrets — the bot token
+and `NOTIFY_SECRET` — so keep it `chmod 600`. The OpenClaw CLI itself runs
+locally under the service user's own credentials.
 
 ## 5. Development
 
@@ -98,10 +100,71 @@ bun run start      # run once (foreground)
 
 ## 6. Reminder helpers
 
-`bin/remind*` must be installed to `/home/openclaw/bin` (`install -m755 bin/remind* /home/openclaw/bin/`).
-They derive the agent from the exec working directory (`workspace` → `main`,
-`workspace-<id>` → `<id>`), so a user's agent can only ever schedule reminders
-for that user.
+Agents schedule reminders by exec'ing small wrapper scripts. Layout on the
+OpenClaw host:
+
+```text
+/home/openclaw/bin/remind-impl/          # the real scripts (remind, remind-in, …)
+/home/openclaw/bin/remind*               # the owner's wrappers  -> agent main
+/home/openclaw/bin/agents/u_<id>/remind* # one user's wrappers   -> agent u_<id>
+```
+
+Each wrapper is two lines and pins the agent id:
+
+```sh
+#!/bin/sh
+exec /home/openclaw/bin/remind-impl/remind-in u_42 "$@"
+```
+
+**Why wrappers.** Agent attribution must not be derivable from anything the
+agent controls. The working directory is not trustworthy (OpenClaw's exec tool
+honours a caller-supplied `workdir`), and neither is the environment (agents may
+pass env overrides). The only unforgeable primitive is OpenClaw's **per-agent
+exec allowlist**: agent `u_42` is allowed to exec
+`/home/openclaw/bin/agents/u_42/remind*` and nothing else — not the
+implementations, not another user's wrapper directory. Because the wrapper
+hard-codes `u_42`, a user's agent can only ever schedule (and list, and cancel)
+reminders for itself. The implementations additionally set an explicit `PATH`,
+validate the agent id (`main` or `u_<digits>`), the job name
+(`[a-z0-9][a-z0-9-]{0,63}`) and the timestamp/cron expression before calling
+`openclaw`.
+
+Deploy:
+
+```bash
+# 1. implementations
+sudo install -d -m755 /home/openclaw/bin/remind-impl
+sudo install -m755 bin/remind-impl/remind* /home/openclaw/bin/remind-impl/
+sudo install -m644 bin/remind-impl/remind-lib /home/openclaw/bin/remind-impl/remind-lib
+sudo install -m755 bin/install-remind-wrappers /home/openclaw/bin/
+
+# 2. the owner's wrappers, on the gateway PATH
+sudo -u openclaw /home/openclaw/bin/install-remind-wrappers main /home/openclaw/bin
+
+# 3. the owner's TOOLS.md (user workspaces get theirs from the provisioner)
+sed 's|{{REMIND_BIN}}|/home/openclaw/bin|g' workspace-template/TOOLS.md.tmpl \
+  | sudo -u openclaw tee /home/openclaw/.openclaw/workspace/TOOLS.md >/dev/null
+```
+
+Pantheon installs each new user's wrappers itself (into
+`PANTHEON_BIN_DIR/agents/<agent-id>/`, byte-identical to what
+`install-remind-wrappers` writes) and adds the matching allowlist entry with
+`openclaw approvals allowlist add`.
+
+Requirements on the OpenClaw host:
+
+- `jq` and `column` (util-linux) must be installed — the helpers build the JSON
+  body with `jq` and `remind-list` formats with `column`.
+- `PANTHEON_NOTIFY_SECRET` must be set **in the OpenClaw gateway's
+  environment**, because the cron job's command reads it at fire time. Configure
+  it in `openclaw.json` under `env` and give it the same value as Pantheon's
+  `NOTIFY_SECRET`:
+
+  ```json5
+  { env: { PANTHEON_NOTIFY_SECRET: "<same value as NOTIFY_SECRET>" } }
+  ```
+
+  Without it the reminder POST is rejected with 401 and never reaches Telegram.
 
 ## 7. Production (systemd)
 
@@ -109,14 +172,23 @@ for that user.
 
 1. **Find Bun** and set `ExecStart` accordingly:
    ```bash
-   which bun    # e.g. /usr/local/bin/bun or /home/pantheon/.bun/bin/bun
+   which bun    # e.g. /usr/local/bin/bun or /home/openclaw/.bun/bin/bun
    ```
-2. Set `User`/`Group`, `WorkingDirectory`, and `EnvironmentFile` to match your
-   install. Running as a dedicated **non-root** user is recommended:
+2. Set `WorkingDirectory` and `EnvironmentFile` to match your install. **Run
+   Pantheon as the same user as the OpenClaw gateway** (`openclaw` in the shipped
+   unit): the provisioner writes agent workspaces into that user's
+   `~/.openclaw/workspace-*` and mutates OpenClaw's config through the CLI, so a
+   separate `pantheon` user would provision agents the gateway cannot see. Adjust
+   `User`/`Group` only if your OpenClaw user is named differently:
    ```bash
-   sudo useradd --system --home-dir /opt/pantheon --shell /usr/sbin/nologin pantheon
-   sudo chown -R pantheon:pantheon /opt/pantheon
+   sudo chown -R openclaw:openclaw /opt/pantheon
    ```
+   If OpenClaw itself runs as a **systemd user unit** (`systemctl --user`), run
+   Pantheon the same way instead: drop the `User`/`Group` lines, install the unit
+   to `~/.config/systemd/user/pantheon.service`, use
+   `WantedBy=default.target`, and enable it with
+   `systemctl --user enable --now pantheon` (plus `loginctl enable-linger openclaw`
+   so it starts at boot).
 3. Install and start:
    ```bash
    sudo cp pantheon.service /etc/systemd/system/pantheon.service
@@ -129,8 +201,8 @@ from `.env`. Extra sandbox hardening is included but commented out, because it
 can interfere with the `openclaw` CLI reaching its local gateway — enable those
 options one at a time and confirm OpenClaw still works.
 
-The service user must be able to run the OpenClaw CLI (same host, same
-credentials OpenClaw expects).
+The service user must be able to run the OpenClaw CLI (same host, same user as
+the OpenClaw gateway, so the CLI sees the same state dir and config).
 
 ## 8. Logs & troubleshooting
 
