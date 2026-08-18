@@ -136,3 +136,26 @@ Because `agents.*`, `tools.*` and `mcp.*` hot-reload, no gateway restart is need
   The same helper-only `TOOLS.md` is installed into the `main` workspace.
 - `/notify` treats a payload without `agentId` as `main` (jobs created before this change).
   Safe because user agents cannot craft raw payloads.
+
+## Amendment 2 (2026-08-18, after final review + live verification)
+
+- **cwd-based attribution is spoofable.** The OpenClaw exec tool honours a caller-supplied
+  `workdir` (verified live: a user agent ran a command with `workdir=<owner workspace>`), and
+  accepts env overrides (OpenClaw blocks PATH/BASH_ENV-class vars, but that is not a basis for
+  identity). Therefore `remind*` no longer derive the agent from `$PWD`.
+- **New attribution: per-agent allowlisted wrappers.** Real implementations live in
+  `/home/openclaw/bin/remind-impl/` and take the agent id as their first argument. Each agent
+  gets a directory of five wrapper scripts that hard-code its id
+  (`exec /home/openclaw/bin/remind-impl/<name> <agentId> "$@"`): the owner's in
+  `/home/openclaw/bin` (on PATH), user agents' in `/home/openclaw/bin/agents/u_<tgid>/`,
+  written by the provisioner. A user agent's exec allowlist is exactly
+  `/home/openclaw/bin/agents/u_<tgid>/remind*` — it cannot exec the impl dir, other users'
+  wrappers, or anything else, so the id it schedules under cannot be forged regardless of
+  cwd/env. User `TOOLS.md` is rendered with the wrapper dir (`{{REMIND_BIN}}`) and uses full paths.
+- Live-verified on kz: compound commands (`remind-list; id`, `… && cat …`) are denied by the
+  allowlist; bare names on PATH and full paths matching the glob are allowed.
+- Provisioner verifies `config get agents.list[i].id == agentId` after writing the tool policy.
+- Owner registry row is seeded at deploy (owner's numeric id is known) so legacy `{text}`
+  reminders resolve to `main` immediately.
+- Pantheon must run as the OpenClaw OS user (`openclaw`), since it writes workspaces, wrappers,
+  OpenClaw config and approvals.
