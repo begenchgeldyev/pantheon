@@ -6,6 +6,7 @@
 // OpenClaw/agent logic lives in the Router.
 
 import { Bot, type Context } from "grammy";
+import type { UserFromGetMe } from "grammy/types";
 import telegramifyMarkdown from "telegramify-markdown";
 import { normalizeUsername, type Config } from "./config";
 import type { Logger } from "./logger/logger";
@@ -102,14 +103,19 @@ const HELP = [
   "/help — show this help",
 ].join("\n");
 
+const WELCOME =
+  "Hi, I'm Hermes — your own personal assistant for dates and reminders. Tell me what to remember or when to remind you.";
+
 export function createBot(
   config: Config,
   router: Router,
   provisioner: Provisioner,
   registry: Registry,
   logger: Logger,
+  /** `botInfo` skips the getMe call at startup; only tests pass it. */
+  opts: { botInfo?: UserFromGetMe } = {},
 ): Bot {
-  const bot = new Bot(config.botToken);
+  const bot = new Bot(config.botToken, opts.botInfo ? { botInfo: opts.botInfo } : undefined);
 
   // --- Authentication: allow-listed Telegram usernames only. ---
   bot.use(async (ctx, next) => {
@@ -127,20 +133,24 @@ export function createBot(
     const from = ctx.from!;
     const username = normalizeUsername(from.username!);
     const chatId = ctx.chat!.id;
-    try {
-      const known = registry.findByUserId(from.id);
-      if (known) {
-        registry.touch(from.id, username, chatId);
-      } else {
+    if (registry.findByUserId(from.id)) {
+      registry.touch(from.id, username, chatId);
+    } else {
+      try {
         await withTyping(ctx, () =>
           provisioner.ensureUser({ tgUserId: from.id, username, firstName: from.first_name, chatId }),
         );
-        await ctx.reply("Hi, I'm Hermes — your own personal assistant for dates and reminders. Tell me what to remember or when to remind you.");
+      } catch (err) {
+        logger.error("provisioning failed", { userId: from.id, error: err instanceof Error ? err.message : String(err) });
+        await ctx.reply(USER_ERROR);
+        return;
       }
-    } catch (err) {
-      logger.error("provisioning failed", { userId: from.id, error: err instanceof Error ? err.message : String(err) });
-      await ctx.reply(USER_ERROR);
-      return;
+      // The user is provisioned; a failed greeting must not swallow the turn.
+      try {
+        await ctx.reply(WELCOME);
+      } catch (err) {
+        logger.warn("welcome message failed", { userId: from.id, error: err instanceof Error ? err.message : String(err) });
+      }
     }
     await next();
   });
