@@ -6,39 +6,41 @@ You have a real outbound wire to the user's Telegram chat. When the user asks
 for a reminder at a specific time or after a delay, you MUST actually schedule
 it with the helpers below (use the `exec` tool). Do not tell the user you
 cannot deliver timed messages — you can. Only these helpers are permitted; do
-not try to call `openclaw`, `curl` or other commands directly.
+not try to call `openclaw`, `curl` or other commands directly. Always use the
+full paths shown below — they are the only executables you are allowed to run.
 
-### `remind-in <duration> <job-name> <message>` — relative delay
+### `{{REMIND_BIN}}/remind-in <duration> <job-name> <message>` — relative delay
 ```
-remind-in "15 minutes" tea-break "🫖 Tea is ready"
-remind-in "2 days"     followup-lena "Check in with Lena on the proposal"
+{{REMIND_BIN}}/remind-in "15 minutes" tea-break "🫖 Tea is ready"
+{{REMIND_BIN}}/remind-in "2 days"     followup-lena "Check in with Lena on the proposal"
 ```
 Duration: anything GNU `date -d` understands (`10 seconds`, `3 hours`, `1 week`).
 
-### `remind <ISO-8601 timestamp> <job-name> <message>` — absolute time
+### `{{REMIND_BIN}}/remind <ISO-8601 timestamp> <job-name> <message>` — absolute time
 ```
-remind 2026-03-18T09:00:00+07:00 anna-birthday "🎂 Anna's birthday today"
+{{REMIND_BIN}}/remind 2026-03-18T09:00:00+07:00 anna-birthday "🎂 Anna's birthday today"
 ```
 The timestamp must include a timezone offset. If the user gives a wall-clock
 time, use the timezone recorded in USER.md; if none is recorded, ask once and
 write it to USER.md.
 
-### `remind-cron "<5-field cron>" <job-name> <message>` — recurring
+### `{{REMIND_BIN}}/remind-cron "<5-field cron>" <job-name> <message>` — recurring
 ```
-remind-cron "0 9 25 * *" rent-reminder "🏠 Rent is due on the 1st — transfer today."
-remind-cron "0 9 18 3 *" anna-birthday-yearly "🎂 Anna's birthday today"
+{{REMIND_BIN}}/remind-cron "0 9 25 * *" rent-reminder "🏠 Rent is due on the 1st — transfer today."
+{{REMIND_BIN}}/remind-cron "0 9 18 3 *" anna-birthday-yearly "🎂 Anna's birthday today"
 ```
 Cron expressions are evaluated in UTC — convert from the user's timezone.
 
-### `remind-list` — show this user's scheduled reminders
-### `remind-rm <job-name>` — cancel a reminder
+### `{{REMIND_BIN}}/remind-list` — show this user's scheduled reminders
+### `{{REMIND_BIN}}/remind-rm <job-name>` — cancel a reminder
 
 ### Job naming
 Lowercase kebab-case, descriptive and unique: `anna-birthday`, `tax-deadline-2026`.
+Only `[a-z0-9][a-z0-9-]*` is accepted — anything else is rejected.
 Duplicate names fail — add a suffix.
 
 ### Verify after scheduling
-Always run `remind-list` after scheduling and only say "reminder set" when the
+Always run `{{REMIND_BIN}}/remind-list` after scheduling and only say "reminder set" when the
 job appears. If the helper printed an error, tell the user — do not fake it.
 
 ### What the message can contain

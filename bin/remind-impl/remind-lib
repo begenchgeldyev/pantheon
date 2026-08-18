@@ -1,0 +1,30 @@
+#!/bin/bash
+# Shared helpers for the remind* implementations. Sourced, not executed.
+#
+# Attribution note: the agent id is NEVER derived from the environment. The
+# working directory, the environment and even OpenClaw's exec `workdir` are
+# caller-controlled, so an agent could spoof any of them. The id is passed as
+# the first argument by a wrapper script that lives in a directory only that
+# one agent is allowed to exec (per-agent approvals allowlist) and hard-codes
+# its id — the allowlist is the only unforgeable part of the chain.
+
+pantheon_check_agent() { # $1 agent id
+  [[ "$1" =~ ^(main|u_[0-9]+)$ ]] && return 0
+  echo "remind: invalid agent id: $1" >&2
+  return 3
+}
+
+# Job-name slugs become part of the cron job name; keep them boring.
+pantheon_check_name() { # $1 name
+  [[ "$1" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]] && return 0
+  echo "remind: invalid job name: $1 (expected [a-z0-9][a-z0-9-]{0,63})" >&2
+  return 2
+}
+
+# Command executed by the cron job at fire time. The JSON body (with agentId
+# baked in at schedule time) is passed on stdin via --command-input.
+NOTIFY_CMD='curl -sf -X POST http://127.0.0.1:8477/notify -H "X-Pantheon-Secret: $PANTHEON_NOTIFY_SECRET" -H "Content-Type: application/json" -d @-'
+
+notify_body() { # $1 agent id, $2 text
+  jq -nc --arg a "$1" --arg t "$2" '{agentId:$a,text:$t}'
+}

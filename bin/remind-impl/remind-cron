@@ -1,0 +1,26 @@
+#!/bin/bash
+# Schedule a recurring reminder.
+# Usage: remind-cron <agent-id> "<5-field cron expr, UTC>" <job-name-slug> <message text>
+# Called through a per-agent wrapper that supplies <agent-id>.
+set -euo pipefail
+# Explicit PATH: the inherited one is caller-controlled and must not decide
+# which curl/jq/openclaw we run.
+export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node-v24.15.0/bin
+. "$(dirname "$(readlink -f "$0")")/remind-lib"
+if [ "$#" -lt 4 ]; then
+  echo "usage: remind-cron <agent-id> \"<cron expr>\" <job-name> <message text...>" >&2
+  exit 2
+fi
+AGENT="$1"; shift
+pantheon_check_agent "$AGENT"
+EXPR="$1"; NAME="$2"; shift 2; MSG="$*"
+# Validate before touching openclaw: no argument may look like a flag.
+if [[ ! "$EXPR" =~ ^[0-9*] ]]; then
+  echo "usage: remind-cron <agent-id> \"<cron expr>\" <job-name> <message text...> (expression must start with a digit or *, got: $EXPR)" >&2
+  exit 2
+fi
+pantheon_check_name "$NAME"
+openclaw cron add "${AGENT}--${NAME}" --agent "$AGENT" --cron "$EXPR" \
+  --command "$NOTIFY_CMD" \
+  --command-input "$(notify_body "$AGENT" "$MSG")" \
+  --best-effort-deliver
