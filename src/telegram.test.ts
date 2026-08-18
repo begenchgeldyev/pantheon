@@ -292,3 +292,64 @@ test("owner can summon the router god (zeus)", async () => {
   expect(h.registry.getChatSelection(1)).toBe("zeus");
   expect(h.sent().at(-1)).toContain("Zeus");
 });
+
+function voiceUpdate(o: { userId: number; username: string; duration?: number; updateId?: number }): Update {
+  return {
+    update_id: o.updateId ?? o.userId,
+    message: {
+      message_id: 300 + o.userId, date: 0,
+      chat: { id: o.userId, type: "private", first_name: "X" },
+      from: { id: o.userId, is_bot: false, first_name: "X", username: o.username },
+      voice: { file_id: "V", file_unique_id: "U", duration: o.duration ?? 3, mime_type: "audio/ogg", file_size: 900 },
+    },
+  } as Update;
+}
+
+test("a voice note is transcribed, echoed, and routed as text", async () => {
+  const config = loadConfig({
+    TELEGRAM_BOT_TOKEN: "123:fake", TELEGRAM_ALLOWED_USERNAMES: "begench",
+    TELEGRAM_OWNER_USERNAME: "begench", NOTIFY_SECRET: "s", GROQ_API_KEY: "gsk_x",
+    PANTHEON_DATA_DIR: "/tmp/pantheon-test",
+  });
+  const registry = new Registry(":memory:");
+  registry.insert({ tgUserId: 1, username: "begench", chatId: 1, agentId: "main" });
+  const routed: Array<{ userId: number; chatId: number; text: string }> = [];
+  const router = {
+    activeAgentFor: () => "main",
+    route: async (req: { userId: number; chatId: number; text: string }) => { routed.push(req); return { agentId: "main", reply: "" }; },
+  } as unknown as Router;
+  const provisioner = { ensureUser: async () => registry.findByUserId(1)! } as unknown as Provisioner;
+  const logger = new Logger({ write: () => {} }, "error");
+  const bot = createBot(config, router, provisioner, registry, logger, {
+    botInfo: {
+      id: 1, is_bot: true, first_name: "P", username: "p_bot", can_join_groups: true,
+      can_read_all_group_messages: false, supports_inline_queries: false, can_connect_to_business: false,
+      has_main_web_app: false, has_topics_enabled: false, allows_users_to_create_topics: false,
+      can_manage_bots: false, supports_join_request_queries: false,
+    },
+    transcriber: async () => "remind me to call the bank tomorrow",
+  });
+  const api: string[] = [];
+  bot.api.config.use(async (_prev, method, payload) => {
+    if (method === "getFile") return { ok: true, result: { file_id: "V", file_unique_id: "U", file_path: "voice/v.ogg" } } as never;
+    if (method === "sendMessage") { api.push(String((payload as { text?: string }).text)); return { ok: true, result: { message_id: 1, date: 0, chat: { id: 1, type: "private" }, text: "" } } as never; }
+    return { ok: true, result: true } as never;
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(new Uint8Array([1, 2, 3]))) as unknown as typeof fetch;
+  try {
+    await bot.handleUpdate(voiceUpdate({ userId: 1, username: "begench" }));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  expect(api.some((t) => t.includes("call the bank"))).toBe(true);
+  expect(routed.at(-1)).toEqual({ userId: 1, chatId: 1, text: "remind me to call the bank tomorrow" });
+});
+
+test("a voice note without a configured transcriber is politely refused", async () => {
+  const h = harness(); // harness builds bot without a transcriber
+  h.registry.insert({ tgUserId: 1, username: "begench", chatId: 1, agentId: "main" });
+  await h.bot.handleUpdate(voiceUpdate({ userId: 1, username: "begench" }));
+  expect(h.sent().at(-1)).toContain("aren't set up");
+  expect(h.routed).toEqual([]);
+});

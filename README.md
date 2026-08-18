@@ -308,3 +308,11 @@ hunting and send your résumé, and she records it in her own workspace. Phase 1
 is **on-demand** — she finds and ranks real roles and weaves a tailored résumé +
 cover letter on request. Proactive scheduled updates and any auto-apply are
 later phases (auto-submission is deliberately not built here).
+
+### Voice notes
+
+Send a voice message and Pantheon transcribes it (Groq Whisper), echoes what it
+heard, then routes the transcript through the pantheon exactly like a typed
+message. Set `GROQ_API_KEY` (a free key from console.groq.com) to enable it;
+without it, voice notes get a polite "not set up" reply. `GROQ_MODEL` defaults to
+`whisper-large-v3`.

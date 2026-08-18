@@ -12,6 +12,10 @@ export type Config = {
   ownerGods: string[];
   /** The router/front-door god (e.g. `zeus`): the default when intent is unclear. Empty = none. */
   routerAgent: string;
+  /** Groq API key for voice-note transcription (Whisper). Empty = voice disabled. Secret. */
+  groqApiKey: string;
+  /** Groq transcription model. */
+  groqModel: string;
   /** Executable name or path for the OpenClaw CLI. */
   openclawBin: string;
   /** OpenClaw state dir (holds workspace*, agents/, openclaw.json). */
@@ -102,6 +106,9 @@ export function loadConfig(env: Env = process.env): Config {
     throw new ConfigError(`PANTHEON_ROUTER is not a valid agent id: ${routerAgent}`);
   }
 
+  const groqApiKey = optional(env, "GROQ_API_KEY", "");
+  const groqModel = optional(env, "GROQ_MODEL", "whisper-large-v3");
+
   const openclawBin = optional(env, "OPENCLAW_BIN", "openclaw");
   const openclawStateDir = optional(env, "OPENCLAW_STATE_DIR", "/home/openclaw/.openclaw");
   const openclawTimeoutMs =
@@ -117,7 +124,7 @@ export function loadConfig(env: Env = process.env): Config {
   const notifySecret = required(env, "NOTIFY_SECRET");
 
   return {
-    botToken, allowedUsernames, ownerUsername, ownerGods, routerAgent, openclawBin, openclawStateDir,
+    botToken, allowedUsernames, ownerUsername, ownerGods, routerAgent, groqApiKey, groqModel, openclawBin, openclawStateDir,
     openclawTimeoutMs, dataDir, binDir, remindImplDir, logLevel, notifyHost,
     notifyPort, notifySecret,
   };

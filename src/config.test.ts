@@ -54,3 +54,14 @@ test("routerAgent parses and validates", () => {
   expect(loadConfig3(base).routerAgent).toBe("");
   expect(() => loadConfig3({ ...base, PANTHEON_ROUTER: "Bad" })).toThrow(/PANTHEON_ROUTER/);
 });
+
+import { loadConfig as loadConfig4 } from "./config";
+
+test("groq config is optional with a sensible model default", () => {
+  const base = { TELEGRAM_BOT_TOKEN: "t", TELEGRAM_ALLOWED_USERNAMES: "b", TELEGRAM_OWNER_USERNAME: "b", NOTIFY_SECRET: "s" };
+  expect(loadConfig4(base).groqApiKey).toBe("");
+  expect(loadConfig4(base).groqModel).toBe("whisper-large-v3");
+  const c = loadConfig4({ ...base, GROQ_API_KEY: "gsk_x", GROQ_MODEL: "whisper-large-v3-turbo" });
+  expect(c.groqApiKey).toBe("gsk_x");
+  expect(c.groqModel).toBe("whisper-large-v3-turbo");
+});

@@ -17,6 +17,7 @@ import type { Logger } from "./logger/logger";
 import type { Provisioner } from "./provisioner";
 import type { Registry, UserRecord } from "./registry";
 import type { Router } from "./router";
+import type { Transcriber } from "./transcribe";
 
 // Display names for the gods, with their emblems.
 const GOD_NAMES: Record<string, string> = { main: "Hermes 🔔", athena: "Athena 🦉", zeus: "Zeus ⚡" };
@@ -132,6 +133,7 @@ const HELP = [
   "/<god> — summon a god (e.g. /hermes, /athena)",
   "",
   "Send me a file (e.g. your résumé) and it goes to the god you're speaking with.",
+  "Send a voice note and I'll transcribe it, then handle it like a message.",
 ].join("\n");
 
 const WELCOME =
@@ -143,10 +145,11 @@ export function createBot(
   provisioner: Provisioner,
   registry: Registry,
   logger: Logger,
-  /** `botInfo` skips the getMe call at startup; only tests pass it. */
-  opts: { botInfo?: UserFromGetMe } = {},
+  /** `botInfo` skips the getMe call at startup (tests only); `transcriber` enables voice notes. */
+  opts: { botInfo?: UserFromGetMe; transcriber?: Transcriber } = {},
 ): Bot {
   const bot = new Bot(config.botToken, opts.botInfo ? { botInfo: opts.botInfo } : undefined);
+  const transcriber = opts.transcriber;
 
   // --- Authentication: allow-listed Telegram usernames only. ---
   bot.use(async (ctx, next) => {
@@ -254,6 +257,31 @@ export function createBot(
       logger,
       `[system] The user uploaded a file into your workspace: ${rel} (${mime}, ${doc.file_size ?? "?"} bytes). Read it if useful, record what it is in your memory, and acknowledge it in your own voice.`,
     );
+  });
+
+  // --- Voice notes: transcribe, then route the transcript like typed text. ---
+  bot.on("message:voice", async (ctx) => {
+    if (!transcriber) return ctx.reply("🎙️ Voice notes aren't set up yet.");
+    if ((ctx.message.voice.duration ?? 0) > 600) {
+      return ctx.reply("That voice note is a bit long — keep it under about 10 minutes.");
+    }
+    let transcript: string;
+    try {
+      transcript = await withTyping(ctx, async () => {
+        const file = await ctx.getFile();
+        if (!file.file_path) throw new Error("telegram returned no file_path");
+        const res = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`);
+        if (!res.ok) throw new Error(`download failed: ${res.status}`);
+        return (await transcriber(await res.blob(), "voice.ogg")).trim();
+      });
+    } catch (err) {
+      logger.error("voice transcription failed", { error: err instanceof Error ? err.message : String(err) });
+      return ctx.reply("⚠️ I couldn't transcribe that voice note. Please try again.");
+    }
+    if (!transcript) return ctx.reply("🎙️ I couldn't make out that voice note — try again?");
+    logger.info("voice transcribed", { chatId: ctx.chat!.id, chars: transcript.length });
+    await ctx.reply(`🎙️ ${transcript}`);
+    await handleTurn(ctx, router, logger, transcript);
   });
 
   bot.on("message:text", async (ctx) => {

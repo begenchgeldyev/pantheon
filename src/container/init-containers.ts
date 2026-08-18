@@ -8,6 +8,7 @@ import { createCliRunner } from "../openclaw-cli";
 import { Provisioner } from "../provisioner";
 import { Registry } from "../registry";
 import { Router } from "../router";
+import { createGroqTranscriber } from "../transcribe";
 import { createBot } from "../telegram";
 import {
   BotToken, CliRunnerToken, ConfigToken, LoggerToken, NotifyServerToken,
@@ -49,10 +50,16 @@ export function initContainers(config: Config) {
   });
   container.register(BotToken, {
     lifetime: "singleton",
-    factory: (c) => createBot(
-      c.resolve(ConfigToken), c.resolve(RouterToken), c.resolve(ProvisionerToken),
-      c.resolve(RegistryToken), c.resolve(LoggerToken),
-    ),
+    factory: (c) => {
+      const config = c.resolve(ConfigToken);
+      const transcriber = config.groqApiKey
+        ? createGroqTranscriber(config.groqApiKey, config.groqModel)
+        : undefined;
+      return createBot(
+        config, c.resolve(RouterToken), c.resolve(ProvisionerToken),
+        c.resolve(RegistryToken), c.resolve(LoggerToken), { transcriber },
+      );
+    },
   });
   container.register(NotifyServerToken, {
     lifetime: "singleton",
