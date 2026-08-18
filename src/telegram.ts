@@ -245,12 +245,14 @@ export function createBot(
       return ctx.reply("⚠️ I couldn't take that file. Please try again.");
     }
     const rel = `inbox/${path.basename(dest)}`;
+    // mime_type is client-supplied; strip anything that could forge extra prompt lines.
+    const mime = (doc.mime_type ?? "unknown type").replace(/[^a-zA-Z0-9._/+-]/g, "").slice(0, 100) || "unknown type";
     logger.info("document stored", { agentId, chatId: ctx.chat!.id, file: rel });
     await handleTurn(
       ctx,
       router,
       logger,
-      `[system] The user uploaded a file into your workspace: ${rel} (${doc.mime_type ?? "unknown type"}, ${doc.file_size ?? "?"} bytes). Read it if useful, record what it is in your memory, and acknowledge it in your own voice.`,
+      `[system] The user uploaded a file into your workspace: ${rel} (${mime}, ${doc.file_size ?? "?"} bytes). Read it if useful, record what it is in your memory, and acknowledge it in your own voice.`,
     );
   });
 
