@@ -71,3 +71,12 @@ Out (later phases): Zeus router; scheduled proactive vacancy pushes (Phase 1b: c
 ## Migration / ops
 - `athena` agent + persona installed by a deploy step (documented), like the owner's remind wrappers.
 - No change to Hermes or the multi-user user-provisioning path.
+
+## Status
+
+Phase 1 built and deployed to kz on 2026-08-18 (branch `athena`). 60 tests pass, tsc clean.
+Athena agent created (workspace-athena, persona installed, calendar MCP denied, web_fetch verified).
+`PANTHEON_OWNER_GODS=athena` enabled; service restarted. Live agent turn: she introduced herself
+in-voice and returned three real TypeScript roles from the Remotive API with real apply links and a
+candid honest assessment. Telegram-side `/gods` `/athena` switching and résumé upload are unit-tested;
+owner to exercise them live. Next: Zeus router (phase 2), then Athena proactive updates + gated auto-apply.
