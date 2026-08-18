@@ -1,5 +1,5 @@
 import { test, expect, afterEach } from "bun:test";
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Provisioner, USER_TOOL_POLICY } from "./provisioner";
@@ -16,7 +16,7 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-function setup() {
+function setup(opts: { slotIdOverride?: string } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "prov-"));
   roots.push(root);
   const stateDir = path.join(root, "state");
@@ -24,10 +24,12 @@ function setup() {
   mkdirSync(stateDir); mkdirSync(templateDir);
   writeFileSync(path.join(templateDir, "AGENTS.md"), "# agents");
   writeFileSync(path.join(templateDir, "USER.md.tmpl"), "Name: {{NAME}} @{{USERNAME}}");
+  writeFileSync(path.join(templateDir, "TOOLS.md.tmpl"), "Run {{REMIND_BIN}}/remind-in <duration> …");
+  const binDir = path.join(root, "bin");
   const config = loadConfig({
     TELEGRAM_BOT_TOKEN: "t", TELEGRAM_ALLOWED_USERNAMES: "begench,amina",
     TELEGRAM_OWNER_USERNAME: "begench", NOTIFY_SECRET: "s",
-    OPENCLAW_STATE_DIR: stateDir, PANTHEON_DATA_DIR: root,
+    OPENCLAW_STATE_DIR: stateDir, PANTHEON_DATA_DIR: root, PANTHEON_BIN_DIR: binDir,
   });
   const calls: string[][] = [];
   let agents: Array<{ id: string }> = [{ id: "main" }];
@@ -43,7 +45,11 @@ function setup() {
       agents = [...agents, { id }];
       return ok("{}");
     }
-    if (args[0] === "config" && args[1] === "get") return ok(JSON.stringify(agents));
+    if (args[0] === "config" && args[1] === "get") {
+      const slot = /^agents\.list\[(\d+)\]\.id$/.exec(args[2] ?? "");
+      if (slot) return ok(JSON.stringify(opts.slotIdOverride ?? agents[Number(slot[1])]?.id ?? null));
+      return ok(JSON.stringify(agents));
+    }
     return ok("");
   };
   const registry = new Registry(":memory:");
@@ -52,7 +58,7 @@ function setup() {
   const failingProv = () => new Provisioner({
     cli: async () => ({ code: 1, stdout: "", stderr: "boom" }), registry, config, templateDir, logger: silent,
   });
-  return { prov, registry, calls, stateDir, templateDir, config, seedAgent, failingProv };
+  return { prov, registry, calls, stateDir, templateDir, binDir, config, seedAgent, failingProv };
 }
 
 /**
@@ -67,10 +73,12 @@ function setupDelayed(opts: { failAgentId?: string } = {}) {
   mkdirSync(stateDir); mkdirSync(templateDir);
   writeFileSync(path.join(templateDir, "AGENTS.md"), "# agents");
   writeFileSync(path.join(templateDir, "USER.md.tmpl"), "Name: {{NAME}} @{{USERNAME}}");
+  writeFileSync(path.join(templateDir, "TOOLS.md.tmpl"), "Run {{REMIND_BIN}}/remind-in <duration> …");
+  const binDir = path.join(root, "bin");
   const config = loadConfig({
     TELEGRAM_BOT_TOKEN: "t", TELEGRAM_ALLOWED_USERNAMES: "begench,amina",
     TELEGRAM_OWNER_USERNAME: "begench", NOTIFY_SECRET: "s",
-    OPENCLAW_STATE_DIR: stateDir, PANTHEON_DATA_DIR: root,
+    OPENCLAW_STATE_DIR: stateDir, PANTHEON_DATA_DIR: root, PANTHEON_BIN_DIR: binDir,
   });
   const calls: string[][] = [];
   let agents: Array<{ id: string }> = [{ id: "main" }];
@@ -94,7 +102,11 @@ function setupDelayed(opts: { failAgentId?: string } = {}) {
         agents = [...agents, { id }];
         return ok("{}");
       }
-      if (args[0] === "config" && args[1] === "get") return ok(JSON.stringify(agents));
+      if (args[0] === "config" && args[1] === "get") {
+        const slot = /^agents\.list\[(\d+)\]\.id$/.exec(args[2] ?? "");
+        if (slot) return ok(JSON.stringify(agents[Number(slot[1])]?.id ?? null));
+        return ok(JSON.stringify(agents));
+      }
       return ok("");
     } finally {
       inFlight--;
@@ -102,7 +114,7 @@ function setupDelayed(opts: { failAgentId?: string } = {}) {
   };
   const registry = new Registry(":memory:");
   const prov = new Provisioner({ cli, registry, config, templateDir, logger: silent });
-  return { prov, registry, calls, stateDir, getMaxInFlight: () => maxInFlight };
+  return { prov, registry, calls, stateDir, binDir, getMaxInFlight: () => maxInFlight };
 }
 
 const amina = { tgUserId: 42, username: "amina", firstName: "Amina", chatId: 42 };
@@ -116,7 +128,7 @@ test("owner maps to main without provisioning", async () => {
 });
 
 test("new user gets u_<id> agent, template files, policy and allowlist", async () => {
-  const { prov, calls, stateDir } = setup();
+  const { prov, calls, stateDir, binDir } = setup();
   const rec = await prov.ensureUser(amina);
   expect(rec.agentId).toBe("u_42");
   const ws = path.join(stateDir, "workspace-u_42");
@@ -128,7 +140,34 @@ test("new user gets u_<id> agent, template files, policy and allowlist", async (
   const set = calls.find((c) => c[0] === "config" && c[1] === "set")!;
   expect(set[2]).toBe("agents.list[1].tools");
   expect(JSON.parse(set[3]!)).toEqual(USER_TOOL_POLICY);
-  expect(calls.some((c) => c[0] === "approvals" && c[1] === "allowlist" && c[2] === "add" && c[3] === "/home/openclaw/bin/remind*" && c.includes("u_42"))).toBe(true);
+  expect(calls.some((c) => c[0] === "approvals" && c[1] === "allowlist" && c[2] === "add"
+    && c[3] === path.join(binDir, "agents/u_42/remind*") && c.includes("u_42"))).toBe(true);
+  // The tool-policy write is index-addressed, so the slot is read back.
+  const verify = calls.findIndex((c) => c[0] === "config" && c[1] === "get" && c[2] === "agents.list[1].id");
+  expect(verify).toBeGreaterThan(calls.indexOf(set));
+});
+
+test("a tool policy landing on the wrong agent aborts provisioning", async () => {
+  const { prov, registry, calls } = setup({ slotIdOverride: "main" });
+  await expect(prov.ensureUser(amina)).rejects.toThrow(/agents\.list/);
+  expect(registry.findByUserId(42)).toBeNull();
+  expect(calls.some((c) => c[0] === "approvals")).toBe(false);
+});
+
+test("the agent gets its own wrapper dir with its id baked in", async () => {
+  const { prov, stateDir, binDir } = setup();
+  await prov.ensureUser(amina);
+  const wrapperDir = path.join(binDir, "agents", "u_42");
+  for (const name of ["remind", "remind-in", "remind-cron", "remind-list", "remind-rm"]) {
+    const file = path.join(wrapperDir, name);
+    expect(existsSync(file)).toBe(true);
+    expect(statSync(file).mode & 0o111).toBe(0o111); // executable
+  }
+  expect(readFileSync(path.join(wrapperDir, "remind-in"), "utf8"))
+    .toBe('#!/bin/sh\nexec /home/openclaw/bin/remind-impl/remind-in u_42 "$@"\n');
+  // TOOLS.md points the agent at its own wrappers, not at bare names.
+  const tools = readFileSync(path.join(stateDir, "workspace-u_42", "TOOLS.md"), "utf8");
+  expect(tools).toBe(`Run ${wrapperDir}/remind-in <duration> …`);
 });
 
 test("MEMORY.md is preserved, never overwritten by the template", async () => {
@@ -150,14 +189,19 @@ test("second call is a no-op and returns the registry row", async () => {
   expect(calls.length).toBe(n);
 });
 
-test("agents add is skipped when the agent already exists in OpenClaw", async () => {
-  const { prov, calls, stateDir, seedAgent } = setup();
-  // Simulate a crash after `agents add` but before the registry insert.
+test("a retry skips agents add and rewrites the wrappers", async () => {
+  const { prov, calls, stateDir, binDir, seedAgent } = setup();
+  // Simulate a crash after `agents add` but before the registry insert, with a
+  // half-written (or tampered) wrapper left behind.
   mkdirSync(path.join(stateDir, "workspace-u_42"), { recursive: true });
+  mkdirSync(path.join(binDir, "agents", "u_42"), { recursive: true });
+  writeFileSync(path.join(binDir, "agents", "u_42", "remind"), "#!/bin/sh\nexec /bin/sh\n");
   seedAgent("u_42");
   await prov.ensureUser(amina);
   expect(calls.filter((c) => c[0] === "agents" && c[1] === "add").length).toBe(0);
   expect(calls.some((c) => c[0] === "config" && c[1] === "set")).toBe(true);
+  expect(readFileSync(path.join(binDir, "agents", "u_42", "remind"), "utf8"))
+    .toBe('#!/bin/sh\nexec /home/openclaw/bin/remind-impl/remind u_42 "$@"\n');
 });
 
 test("CLI failure propagates and nothing is registered", async () => {

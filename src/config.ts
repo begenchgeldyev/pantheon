@@ -16,6 +16,10 @@ export type Config = {
   openclawTimeoutMs: number;
   /** Directory for Pantheon's own data (users.sqlite). */
   dataDir: string;
+  /** Root for the remind wrappers; per-agent dirs live in `<binDir>/agents/<id>`. */
+  binDir: string;
+  /** Directory holding the shared remind implementations the wrappers exec. */
+  remindImplDir: string;
   logLevel: LoggerSeverity;
   notifyHost: string;
   notifyPort: number;
@@ -79,6 +83,10 @@ export function loadConfig(env: Env = process.env): Config {
   const openclawTimeoutMs =
     parsePositiveInt("OPENCLAW_TIMEOUT_SECONDS", optional(env, "OPENCLAW_TIMEOUT_SECONDS", "120")) * 1000;
   const dataDir = path.resolve(optional(env, "PANTHEON_DATA_DIR", "./data"));
+  const binDir = optional(env, "PANTHEON_BIN_DIR", "/home/openclaw/bin");
+  // Default matches `bin/install-remind-wrappers`, so wrappers written by the
+  // provisioner and by the deploy script are byte-identical.
+  const remindImplDir = optional(env, "REMIND_IMPL_DIR", "/home/openclaw/bin/remind-impl");
   const logLevel = parseLogLevel(optional(env, "LOG_LEVEL", "info"));
   const notifyHost = optional(env, "NOTIFY_HOST", "127.0.0.1");
   const notifyPort = parsePositiveInt("NOTIFY_PORT", optional(env, "NOTIFY_PORT", "8477"));
@@ -86,6 +94,7 @@ export function loadConfig(env: Env = process.env): Config {
 
   return {
     botToken, allowedUsernames, ownerUsername, openclawBin, openclawStateDir,
-    openclawTimeoutMs, dataDir, logLevel, notifyHost, notifyPort, notifySecret,
+    openclawTimeoutMs, dataDir, binDir, remindImplDir, logLevel, notifyHost,
+    notifyPort, notifySecret,
   };
 }
