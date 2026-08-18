@@ -9,6 +9,7 @@ import { Provisioner } from "../provisioner";
 import { Registry } from "../registry";
 import { Router } from "../router";
 import { createGroqTranscriber } from "../transcribe";
+import { createPiperSynthesizer } from "../tts";
 import { createBot } from "../telegram";
 import {
   BotToken, CliRunnerToken, ConfigToken, LoggerToken, NotifyServerToken,
@@ -55,9 +56,12 @@ export function initContainers(config: Config) {
       const transcriber = config.groqApiKey
         ? createGroqTranscriber(config.groqApiKey, config.groqModel)
         : undefined;
+      const synthesizer = config.piperBin
+        ? createPiperSynthesizer(config.piperBin, config.piperVoicesDir)
+        : undefined;
       return createBot(
         config, c.resolve(RouterToken), c.resolve(ProvisionerToken),
-        c.resolve(RegistryToken), c.resolve(LoggerToken), { transcriber },
+        c.resolve(RegistryToken), c.resolve(LoggerToken), { transcriber, synthesizer },
       );
     },
   });

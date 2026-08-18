@@ -316,3 +316,12 @@ heard, then routes the transcript through the pantheon exactly like a typed
 message. Set `GROQ_API_KEY` (a free key from console.groq.com) to enable it;
 without it, voice notes get a polite "not set up" reply. `GROQ_MODEL` defaults to
 `whisper-large-v3`.
+
+### God voices (voice replies)
+
+When you send a **voice note**, the god replies **in kind** — as a voice message
+(plus text) — using local **Piper** TTS on the server (keyless, no external
+service). Each god has a distinct voice: Zeus deep, Athena crisp, Hermes quick.
+Enable by setting `PANTHEON_PIPER_BIN` to the Piper binary and
+`PANTHEON_PIPER_VOICES` to the voices directory; without it, replies stay text.
+Long replies (>900 chars) stay text-only.

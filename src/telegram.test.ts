@@ -316,7 +316,7 @@ test("a voice note is transcribed, echoed, and routed as text", async () => {
   const routed: Array<{ userId: number; chatId: number; text: string }> = [];
   const router = {
     activeAgentFor: () => "main",
-    route: async (req: { userId: number; chatId: number; text: string }) => { routed.push(req); return { agentId: "main", reply: "" }; },
+    route: async (req: { userId: number; chatId: number; text: string }) => { routed.push(req); return { agentId: "main", reply: "It is done." }; },
   } as unknown as Router;
   const provisioner = { ensureUser: async () => registry.findByUserId(1)! } as unknown as Provisioner;
   const logger = new Logger({ write: () => {} }, "error");
@@ -328,9 +328,12 @@ test("a voice note is transcribed, echoed, and routed as text", async () => {
       can_manage_bots: false, supports_join_request_queries: false,
     },
     transcriber: async () => "remind me to call the bank tomorrow",
+    synthesizer: async () => Buffer.from("OGGDATA"),
   });
   const api: string[] = [];
+  const methods: string[] = [];
   bot.api.config.use(async (_prev, method, payload) => {
+    methods.push(method);
     if (method === "getFile") return { ok: true, result: { file_id: "V", file_unique_id: "U", file_path: "voice/v.ogg" } } as never;
     if (method === "sendMessage") { api.push(String((payload as { text?: string }).text)); return { ok: true, result: { message_id: 1, date: 0, chat: { id: 1, type: "private" }, text: "" } } as never; }
     return { ok: true, result: true } as never;
@@ -344,6 +347,7 @@ test("a voice note is transcribed, echoed, and routed as text", async () => {
   }
   expect(api.some((t) => t.includes("call the bank"))).toBe(true);
   expect(routed.at(-1)).toEqual({ userId: 1, chatId: 1, text: "remind me to call the bank tomorrow" });
+  expect(methods).toContain("sendVoice"); // reply-in-kind: spoke back
 });
 
 test("a voice note without a configured transcriber is politely refused", async () => {
