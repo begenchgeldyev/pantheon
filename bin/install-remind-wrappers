@@ -1,0 +1,31 @@
+#!/bin/bash
+# Install the per-agent remind wrappers.
+#
+# Usage: install-remind-wrappers <agent-id> <target-dir>
+#
+# Each wrapper is a two-line shim that execs the shared implementation with the
+# agent id baked in. Attribution rests entirely on OpenClaw's per-agent exec
+# allowlist: an agent may only exec its own wrapper directory, so it can only
+# ever schedule reminders under its own id. The implementations themselves are
+# NOT allowlisted for user agents.
+#
+# The owner's wrappers go into /home/openclaw/bin (already on PATH); user
+# wrappers are installed by Pantheon's provisioner into
+# <binDir>/agents/<agent-id>/ (identical content — keep the two in sync).
+set -euo pipefail
+if [ "$#" -ne 2 ]; then
+  echo "usage: install-remind-wrappers <agent-id> <target-dir>" >&2
+  exit 2
+fi
+AGENT="$1"; TARGET="$2"
+if [[ ! "$AGENT" =~ ^(main|u_[0-9]+)$ ]]; then
+  echo "install-remind-wrappers: invalid agent id: $AGENT" >&2
+  exit 3
+fi
+IMPL_DIR="${REMIND_IMPL_DIR:-/home/openclaw/bin/remind-impl}"
+mkdir -p "$TARGET"
+for name in remind remind-in remind-cron remind-list remind-rm; do
+  printf '#!/bin/sh\nexec %s/%s %s "$@"\n' "$IMPL_DIR" "$name" "$AGENT" > "$TARGET/$name"
+  chmod 755 "$TARGET/$name"
+done
+echo "installed remind wrappers for $AGENT in $TARGET"

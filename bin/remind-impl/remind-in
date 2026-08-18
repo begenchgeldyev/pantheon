@@ -1,0 +1,20 @@
+#!/bin/bash
+# Schedule a one-shot reminder relative to now.
+# Usage: remind-in <agent-id> <duration> <job-name-slug> <message text>
+# Called through a per-agent wrapper that supplies <agent-id>.
+set -euo pipefail
+# Explicit PATH: the inherited one is caller-controlled and must not decide
+# which curl/jq/openclaw we run.
+export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node-v24.15.0/bin
+HERE="$(dirname "$(readlink -f "$0")")"
+. "$HERE/remind-lib"
+if [ "$#" -lt 4 ]; then
+  echo "usage: remind-in <agent-id> <duration> <job-name> <message text...>" >&2
+  exit 2
+fi
+AGENT="$1"; shift
+pantheon_check_agent "$AGENT"
+DUR="$1"; NAME="$2"; shift 2; MSG="$*"
+pantheon_check_name "$NAME"
+AT=$(date -u -d "+${DUR}" +%Y-%m-%dT%H:%M:%SZ)
+exec "$HERE/remind" "$AGENT" "$AT" "$NAME" "$MSG"

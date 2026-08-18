@@ -1,80 +1,68 @@
-// Message routing.
+// Message routing: which god, which session, then delegate to OpenClawClient.
 //
-// The router decides *which* agent a message goes to and *which* OpenClaw
-// session it belongs to, then delegates the actual call to the OpenClawClient.
-// Telegram code talks to this module and never touches OpenClaw directly.
-//
-// Selection state is intentionally in-memory: a Map from chat id -> agent id.
-// This is the simplest correct implementation and needs no database because:
-//   - OpenClaw owns real conversation memory (keyed by session-key), so a
-//     restart never loses history.
-//   - The only thing lost on restart is the user's *current agent choice*,
-//     which safely falls back to the default agent.
-// If multi-process or durable selection is ever needed, this is the single
-// place to swap in persistence.
+// A chat talks to its *active* god: the stored per-chat selection when it is
+// one the user may summon, otherwise the user's default god (Hermes for the
+// owner, their own agent for everyone else). See gods.ts.
 
 import type { Config } from "./config";
+import { activeAgent, godsFor, isOwner } from "./gods";
+import { classifyIntent } from "./intent";
 import type { Logger } from "./logger/logger";
+import type { Registry } from "./registry";
 import type { OpenClawClient } from "./types";
 
-export type RouteRequest = {
-  userId: number;
-  chatId: number;
-  text: string;
-  /** When set, route this one message to this agent without changing selection. */
-  overrideAgent?: string;
-};
+const ATHENA_AGENT_ID = "athena";
 
-export type RouteResult = {
-  agentId: string;
-  reply: string;
-};
+export type RouteRequest = { userId: number; chatId: number; text: string };
+export type RouteResult = { agentId: string; reply: string };
+
+export class RouterError extends Error {
+  override name = "RouterError";
+}
 
 export class Router {
-  private readonly selected = new Map<number, string>();
-
   constructor(
     private readonly client: OpenClawClient,
+    private readonly registry: Registry,
     private readonly config: Config,
     private readonly logger: Logger,
   ) {}
 
-  listAgents(): string[] {
-    return this.config.agents;
-  }
-
-  isKnownAgent(name: string): boolean {
-    return this.config.agents.includes(name);
-  }
-
-  getSelectedAgent(chatId: number): string {
-    return this.selected.get(chatId) ?? this.config.defaultAgent;
-  }
-
-  /** Select an agent for a chat. Returns false if the agent is unknown. */
-  selectAgent(chatId: number, name: string): boolean {
-    if (!this.isKnownAgent(name)) return false;
-    this.selected.set(chatId, name);
-    return true;
-  }
-
-  /**
-   * Stable per-conversation key. OpenClaw isolates sessions by agent when
-   * --agent is supplied, so the key itself does not need the agent id.
-   */
+  /** Stable per-conversation key; OpenClaw scopes it to --agent. */
   buildSessionKey(userId: number, chatId: number): string {
     return `telegram:${userId}:${chatId}`;
   }
 
+  /** The god this chat is currently talking to. Throws if the user is unknown. */
+  activeAgentFor(userId: number, chatId: number): string {
+    const rec = this.registry.findByUserId(userId);
+    if (!rec) throw new RouterError(`no agent registered for user ${userId}`);
+    return activeAgent(rec, this.config, this.registry.getChatSelection(chatId));
+  }
+
   async route(req: RouteRequest): Promise<RouteResult> {
-    const agentId = req.overrideAgent ?? this.getSelectedAgent(req.chatId);
+    const rec = this.registry.findByUserId(req.userId);
+    if (!rec) throw new RouterError(`no agent registered for user ${req.userId}`);
+
+    let agentId = activeAgent(rec, this.config, this.registry.getChatSelection(req.chatId));
+
+    // Zeus's judgment: for the owner, a message with a clear specialist intent
+    // is dispatched to that god and the choice sticks. No clear signal → stay
+    // with whichever god the chat is already on (Zeus by default). Non-owner
+    // users have a single god and are never re-routed.
+    if (isOwner(rec, this.config)) {
+      const athenaId = godsFor(rec, this.config).includes(ATHENA_AGENT_ID) ? ATHENA_AGENT_ID : null;
+      const intent = classifyIntent(req.text, athenaId);
+      if (intent && intent !== agentId) {
+        this.registry.setChatSelection(req.chatId, intent);
+        this.logger.info("router switched god by intent", { chatId: req.chatId, from: agentId, to: intent });
+        agentId = intent;
+      }
+    }
+
     const sessionKey = this.buildSessionKey(req.userId, req.chatId);
     this.logger.debug("router dispatch", { agentId, sessionKey });
-    const reply = await this.client.sendMessage({
-      agentId,
-      message: req.text,
-      sessionKey,
-    });
+    const reply = await this.client.sendMessage({ agentId, message: req.text, sessionKey });
     return { agentId, reply };
   }
 }

@@ -1,0 +1,14 @@
+#!/bin/bash
+# Push a message from a god to its owner's Telegram chat, via Pantheon's notify
+# endpoint. Usage: god-announce <agentId> <message text...>
+# The gateway injects PANTHEON_NOTIFY_SECRET into the environment.
+set -euo pipefail
+if [ "$#" -lt 2 ]; then
+  echo "usage: god-announce <agentId> <message text...>" >&2
+  exit 2
+fi
+AGENT="$1"; shift; MSG="$*"
+jq -nc --arg a "$AGENT" --arg t "$MSG" '{agentId:$a,text:$t}' \
+  | curl -sf -X POST "http://${NOTIFY_HOST:-127.0.0.1}:${NOTIFY_PORT:-8477}/notify" \
+      -H "X-Pantheon-Secret: $PANTHEON_NOTIFY_SECRET" \
+      -H "Content-Type: application/json" -d @-

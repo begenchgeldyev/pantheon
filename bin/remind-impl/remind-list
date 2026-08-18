@@ -1,0 +1,15 @@
+#!/bin/bash
+# List this agent's reminders (name, schedule, next run).
+# Usage: remind-list <agent-id>   (supplied by the per-agent wrapper)
+set -euo pipefail
+# Explicit PATH: the inherited one is caller-controlled and must not decide
+# which curl/jq/openclaw we run.
+export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node-v24.15.0/bin
+. "$(dirname "$(readlink -f "$0")")/remind-lib"
+if [ "$#" -ne 1 ]; then echo "usage: remind-list <agent-id>" >&2; exit 2; fi
+AGENT="$1"
+pantheon_check_agent "$AGENT"
+openclaw cron list --json | jq -r --arg p "${AGENT}--" '
+  .jobs[] | select(.name | startswith($p))
+  | "\(.name | ltrimstr($p))\t\(.schedule.kind)\t\(.schedule.at // .schedule.expr // "")\tnext=\(.state.nextRunAtMs // "-")"' \
+  | column -t -s $'\t' || true

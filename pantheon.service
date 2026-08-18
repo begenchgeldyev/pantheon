@@ -7,19 +7,23 @@ After=network-online.target
 [Service]
 Type=simple
 
-# Run as a non-root user that owns the project directory. Adjust to match your VPS.
-User=pantheon
-Group=pantheon
+# Pantheon MUST run as the same user as the OpenClaw gateway: it writes agent
+# workspaces under that user's OpenClaw state dir (~/.openclaw/workspace-*) and
+# mutates OpenClaw's config through the CLI. Adjust if your OpenClaw user has a
+# different name.
+User=openclaw
+Group=openclaw
 
 # Absolute path to the project checkout.
 WorkingDirectory=/opt/pantheon
 
 # Absolute path to the Bun binary. Find it on the VPS with:  which bun
-# (e.g. /home/pantheon/.bun/bin/bun or /usr/local/bin/bun) and set it here.
+# (e.g. /home/openclaw/.bun/bin/bun or /usr/local/bin/bun) and set it here.
 ExecStart=/usr/local/bin/bun run src/index.ts
 
-# Configuration is loaded from this file (contains the bot token). Keep it
-# readable only by the service user:  chmod 600 /opt/pantheon/.env
+# Configuration is loaded from this file (contains the bot token and the notify
+# secret). Keep it readable only by the service user:
+#   chown openclaw:openclaw /opt/pantheon/.env && chmod 600 /opt/pantheon/.env
 EnvironmentFile=/opt/pantheon/.env
 
 # Restart automatically after unexpected failures, with a small backoff.
@@ -38,14 +42,15 @@ SyslogIdentifier=pantheon
 # --- Basic hardening ---
 # NoNewPrivileges is always safe. The stricter options below are commented out
 # because Pantheon spawns the `openclaw` CLI, which may need to reach the local
-# OpenClaw Gateway (e.g. a socket under /tmp) or read/write its own state under
-# the home directory. Enable them one at a time and confirm OpenClaw still works
-# before committing to them.
+# OpenClaw Gateway (e.g. a socket under /tmp) and must read/write OpenClaw state
+# under /home/openclaw. Enable them one at a time and confirm OpenClaw still
+# works before committing to them. ProtectHome in particular must stay off (or
+# be paired with ReadWritePaths=/home/openclaw), since provisioning writes agent
+# workspaces there.
 NoNewPrivileges=true
 # ProtectSystem=strict
-# ProtectHome=read-only
 # PrivateTmp=true
-# ReadWritePaths=/opt/pantheon
+# ReadWritePaths=/opt/pantheon /home/openclaw/.openclaw
 
 [Install]
 WantedBy=multi-user.target

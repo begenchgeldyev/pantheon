@@ -5,15 +5,28 @@
 // the agent's Markdown) split to fit Telegram's length limit. All
 // OpenClaw/agent logic lives in the Router.
 
+import { mkdirSync } from "node:fs";
+import path from "node:path";
 import { Bot, type Context } from "grammy";
+import type { UserFromGetMe } from "grammy/types";
 import telegramifyMarkdown from "telegramify-markdown";
-import type { Config } from "./config";
+import { normalizeUsername, type Config } from "./config";
+import { isAllowedDoc, inboxPathFor } from "./documents";
+import { godsFor, HERMES_AGENT_ID } from "./gods";
 import type { Logger } from "./logger/logger";
+import type { Provisioner } from "./provisioner";
+import type { Registry, UserRecord } from "./registry";
 import type { Router } from "./router";
+import type { Transcriber } from "./transcribe";
+
+// Display names for the gods, with their emblems.
+const GOD_NAMES: Record<string, string> = { main: "Hermes 🔔", athena: "Athena 🦉", zeus: "Zeus ⚡" };
+function godName(agentId: string): string {
+  return GOD_NAMES[agentId] ?? agentId.charAt(0).toUpperCase() + agentId.slice(1);
+}
 
 // Telegram hard limit is 4096 chars; stay just under for safety.
 const TELEGRAM_MAX = 4000;
-const AGENT_ID_RE = /^[a-z0-9_]+$/; // valid characters for a Telegram command
 
 const USER_ERROR = "⚠️ Something went wrong reaching the agent. Please try again.";
 
@@ -86,141 +99,225 @@ async function withTyping<T>(ctx: Context, work: () => Promise<T>): Promise<T> {
   }
 }
 
-function agentsList(router: Router): string {
-  const lines = router
-    .listAgents()
-    .map((a) => `• ${a}`)
-    .join("\n");
-  return `Known agents:\n${lines}`;
+export function isAllowed(username: string | undefined, allowed: Set<string>): boolean {
+  if (!username) return false;
+  return allowed.has(normalizeUsername(username));
 }
 
+// OpenClaw emits a sentinel when the agent deliberately stays silent (e.g. in
+// reply to a bare acknowledgement). OpenClaw's own channels swallow it; because
+// Pantheon forwards the agent's text verbatim, we must recognise it too and
+// send nothing instead of leaking the literal token. Matches the exact whole
+// message, case-insensitively, after stripping surrounding markdown emphasis —
+// the same normalisation OpenClaw uses (`/^NO_REPLY$/iu`).
+const SILENT_TOKEN_RE = /^(NO_REPLY|HEARTBEAT_OK)$/iu;
+
+export function isSilentToken(text: string): boolean {
+  const stripped = text.replace(/^[\s*_`~]+|[\s*_`~]+$/gu, "").trim();
+  return SILENT_TOKEN_RE.test(stripped);
+}
+
+// When the agent stays silent, Hermes — the winged messenger — acknowledges
+// without speaking: a dove reaction on the user's message rather than a reply.
+const SILENT_REACTION = "🕊"; // U+1F54A dove, no variation selector (Telegram's allowed reaction set)
+
 const HELP = [
-  "Pantheon — Telegram gateway to OpenClaw.",
+  "Pantheon — your personal Hermes, a Telegram gateway to OpenClaw.",
+  "",
+  "Just write to me: dates to remember, reminders to schedule, questions about what's coming up.",
   "",
   "Commands:",
   "/start — check the connection",
   "/help — show this help",
-  "/agents — list known agents",
-  "/agent <name> — select the active agent",
-  "/<agent> <message> — send one message to a specific agent",
+  "/gods — list the gods you may summon",
+  "/<god> — summon a god (e.g. /hermes, /athena)",
   "",
-  "Any other message goes to your currently selected agent.",
+  "Send me a file (e.g. your résumé) and it goes to the god you're speaking with.",
+  "Send a voice note and I'll transcribe it, then handle it like a message.",
 ].join("\n");
 
-export function createBot(config: Config, router: Router, logger: Logger): Bot {
-  const bot = new Bot(config.botToken);
+const WELCOME =
+  "Hi, I'm Hermes — your own personal assistant for dates and reminders. Tell me what to remember or when to remind you.";
 
-  // --- Authentication: allowlist a single numeric user id. ---
+export function createBot(
+  config: Config,
+  router: Router,
+  provisioner: Provisioner,
+  registry: Registry,
+  logger: Logger,
+  /** `botInfo` skips the getMe call at startup (tests only); `transcriber` enables voice notes. */
+  opts: { botInfo?: UserFromGetMe; transcriber?: Transcriber } = {},
+): Bot {
+  const bot = new Bot(config.botToken, opts.botInfo ? { botInfo: opts.botInfo } : undefined);
+  const transcriber = opts.transcriber;
+
+  // --- Authentication: allow-listed Telegram usernames only. ---
   bot.use(async (ctx, next) => {
-    const fromId = ctx.from?.id;
-    if (fromId !== config.allowedUserId) {
-      logger.warn("rejected unauthorized message", { fromId: fromId ?? null });
+    const from = ctx.from;
+    if (!from || from.is_bot || !isAllowed(from.username, config.allowedUsernames)) {
+      logger.warn("rejected unauthorized message", { fromId: from?.id ?? null, username: from?.username ?? null });
       return; // ignore silently
     }
-    logger.info("authorized message received", {
-      userId: fromId,
-      chatId: ctx.chat?.id,
-    });
+    if (ctx.chat?.type !== "private") return; // no group chats: one user, one agent
     await next();
   });
 
-  // --- Static commands ---
+  // --- Ensure the user has an agent (provisions on first contact). ---
+  bot.use(async (ctx, next) => {
+    const from = ctx.from!;
+    const username = normalizeUsername(from.username!);
+    const chatId = ctx.chat!.id;
+    if (registry.findByUserId(from.id)) {
+      registry.touch(from.id, username, chatId);
+    } else {
+      try {
+        await withTyping(ctx, () =>
+          provisioner.ensureUser({ tgUserId: from.id, username, firstName: from.first_name, chatId }),
+        );
+      } catch (err) {
+        logger.error("provisioning failed", { userId: from.id, error: err instanceof Error ? err.message : String(err) });
+        await ctx.reply(USER_ERROR);
+        return;
+      }
+      // The user is provisioned; a failed greeting must not swallow the turn.
+      try {
+        await ctx.reply(WELCOME);
+      } catch (err) {
+        logger.warn("welcome message failed", { userId: from.id, error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    await next();
+  });
+
   bot.command("start", (ctx) =>
     ctx.reply(
-      `Pantheon is connected and ready.\nActive agent: ${router.getSelectedAgent(
-        ctx.chat.id,
+      `Pantheon is connected and ready.\nNow speaking with: ${godName(
+        router.activeAgentFor(ctx.from!.id, ctx.chat!.id),
       )}\nSend /help for commands.`,
     ),
   );
-
   bot.command("help", (ctx) => ctx.reply(HELP));
 
-  bot.command("agents", (ctx) => ctx.reply(agentsList(router)));
+  // --- Gods: the owner may summon more than one god and switch between them. ---
+  const godsMenu = (user: UserRecord, active: string): string => {
+    const gods = godsFor(user, config);
+    const lines = gods.map((g) => `${g === active ? "▸" : "·"} ${godName(g)}`).join("\n");
+    const hint = gods.length > 1 ? "\n\nSummon one with /<name> (e.g. /athena)." : "";
+    return `Gods you may summon:\n${lines}${hint}`;
+  };
 
-  bot.command("agent", (ctx) => {
-    const name = ctx.match.trim();
-    if (!name) {
-      return ctx.reply(
-        `Current agent: ${router.getSelectedAgent(ctx.chat.id)}\n\n${agentsList(router)}`,
-      );
-    }
-    if (!router.selectAgent(ctx.chat.id, name)) {
-      return ctx.reply(`Unknown agent: ${name}\n\n${agentsList(router)}`);
-    }
-    logger.info("selected agent", { chatId: ctx.chat.id, agentId: name });
-    return ctx.reply(`Active agent is now: ${name}`);
+  bot.command("gods", (ctx) => {
+    const user = registry.findByUserId(ctx.from!.id)!;
+    return ctx.reply(godsMenu(user, router.activeAgentFor(ctx.from!.id, ctx.chat!.id)));
   });
 
-  // --- One-shot per-agent commands (generated from the agent list) ---
-  // e.g. `/hermes remind me ...` routes a single message to hermes without
-  // changing the selected agent. Only ids that are valid Telegram commands.
-  for (const agentId of router.listAgents()) {
-    if (!AGENT_ID_RE.test(agentId)) continue;
-    bot.command(agentId, async (ctx) => {
-      const text = ctx.match.trim();
-      if (!text) {
-        // No message: treat as a selection, like /agent <id>.
-        router.selectAgent(ctx.chat.id, agentId);
-        return ctx.reply(`Active agent is now: ${agentId}`);
-      }
-      await handleTurn(ctx, router, logger, text, agentId);
-    });
+  // `/hermes [msg]`, `/athena [msg]`, … — select a god (and optionally speak once).
+  const summon = (agentId: string) => async (ctx: Context) => {
+    const user = registry.findByUserId(ctx.from!.id)!;
+    const active = router.activeAgentFor(ctx.from!.id, ctx.chat!.id);
+    if (!godsFor(user, config).includes(agentId)) return ctx.reply(godsMenu(user, active));
+    registry.setChatSelection(ctx.chat!.id, agentId);
+    logger.info("god summoned", { userId: ctx.from!.id, chatId: ctx.chat!.id, agentId });
+    const msg = ctx.match ? String(ctx.match).trim() : "";
+    if (msg) return handleTurn(ctx, router, logger, msg);
+    return ctx.reply(`You now speak with ${godName(agentId)}.`);
+  };
+  bot.command("hermes", summon(HERMES_AGENT_ID));
+  for (const g of [...(config.routerAgent ? [config.routerAgent] : []), ...config.ownerGods]) {
+    if (/^[a-z][a-z0-9_]*$/.test(g)) bot.command(g, summon(g));
   }
 
-  // --- Free-form text ---
+  // --- Uploaded files land in the active god's workspace inbox. ---
+  bot.on("message:document", async (ctx) => {
+    const doc = ctx.message.document;
+    const name = doc.file_name ?? "file";
+    const gate = isAllowedDoc(name, doc.file_size ?? 0);
+    if (!gate.ok) return ctx.reply(gate.reason);
+
+    const agentId = router.activeAgentFor(ctx.from!.id, ctx.chat!.id);
+    const dest = inboxPathFor(config.openclawStateDir, agentId, name);
+    try {
+      const file = await ctx.getFile();
+      if (!file.file_path) throw new Error("telegram returned no file_path");
+      const res = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`);
+      if (!res.ok) throw new Error(`download failed: ${res.status}`);
+      mkdirSync(path.dirname(dest), { recursive: true });
+      await Bun.write(dest, res);
+    } catch (err) {
+      logger.error("document intake failed", { agentId, error: err instanceof Error ? err.message : String(err) });
+      return ctx.reply("⚠️ I couldn't take that file. Please try again.");
+    }
+    const rel = `inbox/${path.basename(dest)}`;
+    // mime_type is client-supplied; strip anything that could forge extra prompt lines.
+    const mime = (doc.mime_type ?? "unknown type").replace(/[^a-zA-Z0-9._/+-]/g, "").slice(0, 100) || "unknown type";
+    logger.info("document stored", { agentId, chatId: ctx.chat!.id, file: rel });
+    await handleTurn(
+      ctx,
+      router,
+      logger,
+      `[system] The user uploaded a file into your workspace: ${rel} (${mime}, ${doc.file_size ?? "?"} bytes). Read it if useful, record what it is in your memory, and acknowledge it in your own voice.`,
+    );
+  });
+
+  // --- Voice notes: transcribe, then route the transcript like typed text. ---
+  bot.on("message:voice", async (ctx) => {
+    if (!transcriber) return ctx.reply("🎙️ Voice notes aren't set up yet.");
+    if ((ctx.message.voice.duration ?? 0) > 600) {
+      return ctx.reply("That voice note is a bit long — keep it under about 10 minutes.");
+    }
+    let transcript: string;
+    try {
+      transcript = await withTyping(ctx, async () => {
+        const file = await ctx.getFile();
+        if (!file.file_path) throw new Error("telegram returned no file_path");
+        const res = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${file.file_path}`);
+        if (!res.ok) throw new Error(`download failed: ${res.status}`);
+        return (await transcriber(await res.blob(), "voice.ogg")).trim();
+      });
+    } catch (err) {
+      logger.error("voice transcription failed", { error: err instanceof Error ? err.message : String(err) });
+      return ctx.reply("⚠️ I couldn't transcribe that voice note. Please try again.");
+    }
+    if (!transcript) return ctx.reply("🎙️ I couldn't make out that voice note — try again?");
+    logger.info("voice transcribed", { chatId: ctx.chat!.id, chars: transcript.length });
+    await ctx.reply(`🎙️ ${transcript}`);
+    await handleTurn(ctx, router, logger, transcript);
+  });
+
   bot.on("message:text", async (ctx) => {
     const text = ctx.message.text;
-    if (text.startsWith("/")) {
-      // Reached here only if no command above matched.
-      return ctx.reply("Unknown command. Send /help for the list.");
-    }
+    if (text.startsWith("/")) return ctx.reply("Unknown command. Send /help for the list.");
     await handleTurn(ctx, router, logger, text);
   });
 
-  // --- Centralized error handling ---
   bot.catch((err) => {
-    logger.error("bot handler error", {
-      error: err.error instanceof Error ? err.error.message : String(err.error),
-    });
+    logger.error("bot handler error", { error: err.error instanceof Error ? err.error.message : String(err.error) });
     err.ctx.reply(USER_ERROR).catch(() => {});
   });
 
   return bot;
 }
 
-/** Run one agent turn: route via OpenClaw and reply. Errors stay server-side. */
-async function handleTurn(
-  ctx: Context,
-  router: Router,
-  logger: Logger,
-  text: string,
-  overrideAgent?: string,
-): Promise<void> {
+async function handleTurn(ctx: Context, router: Router, logger: Logger, text: string): Promise<void> {
   const chatId = ctx.chat?.id;
   const userId = ctx.from?.id;
   if (chatId === undefined || userId === undefined) return;
-
   const started = Date.now();
-  const agentForLog = overrideAgent ?? router.getSelectedAgent(chatId);
-  logger.info("openclaw request started", { agentId: agentForLog, chatId });
-
+  logger.info("openclaw request started", { userId, chatId });
   try {
-    const result = await withTyping(ctx, () =>
-      router.route({ userId, chatId, text, overrideAgent }),
-    );
-    logger.info("openclaw response completed", {
-      agentId: result.agentId,
-      chatId,
-      durationMs: Date.now() - started,
-    });
+    const result = await withTyping(ctx, () => router.route({ userId, chatId, text }));
+    logger.info("openclaw response completed", { agentId: result.agentId, chatId, durationMs: Date.now() - started });
+    if (isSilentToken(result.reply)) {
+      // Agent chose silence: react instead of sending the literal sentinel.
+      logger.info("silent reply suppressed", { agentId: result.agentId, chatId });
+      await ctx.react(SILENT_REACTION).catch((err) =>
+        logger.warn("silent reaction failed", { error: err instanceof Error ? err.message : String(err) }),
+      );
+      return;
+    }
     await sendReply(ctx, result.reply, logger);
   } catch (err) {
-    logger.error("openclaw request failed", {
-      agentId: agentForLog,
-      chatId,
-      durationMs: Date.now() - started,
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logger.error("openclaw request failed", { userId, chatId, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) });
     await ctx.reply(USER_ERROR);
   }
 }

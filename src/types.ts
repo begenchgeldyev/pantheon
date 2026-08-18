@@ -2,7 +2,7 @@
 
 /** Input for a single OpenClaw agent turn. */
 export type SendMessageInput = {
-  /** OpenClaw agent id, e.g. "hermes". */
+  /** OpenClaw agent id, e.g. "main". */
   agentId: string;
   /** The user's message text. */
   message: string;
