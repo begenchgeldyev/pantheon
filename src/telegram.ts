@@ -93,6 +93,23 @@ export function isAllowed(username: string | undefined, allowed: Set<string>): b
   return allowed.has(normalizeUsername(username));
 }
 
+// OpenClaw emits a sentinel when the agent deliberately stays silent (e.g. in
+// reply to a bare acknowledgement). OpenClaw's own channels swallow it; because
+// Pantheon forwards the agent's text verbatim, we must recognise it too and
+// send nothing instead of leaking the literal token. Matches the exact whole
+// message, case-insensitively, after stripping surrounding markdown emphasis —
+// the same normalisation OpenClaw uses (`/^NO_REPLY$/iu`).
+const SILENT_TOKEN_RE = /^(NO_REPLY|HEARTBEAT_OK)$/iu;
+
+export function isSilentToken(text: string): boolean {
+  const stripped = text.replace(/^[\s*_`~]+|[\s*_`~]+$/gu, "").trim();
+  return SILENT_TOKEN_RE.test(stripped);
+}
+
+// When the agent stays silent, Hermes — the winged messenger — acknowledges
+// without speaking: a dove reaction on the user's message rather than a reply.
+const SILENT_REACTION = "🕊"; // U+1F54A dove, no variation selector (Telegram's allowed reaction set)
+
 const HELP = [
   "Pantheon — your personal Hermes, a Telegram gateway to OpenClaw.",
   "",
@@ -183,6 +200,14 @@ async function handleTurn(ctx: Context, router: Router, logger: Logger, text: st
   try {
     const result = await withTyping(ctx, () => router.route({ userId, chatId, text }));
     logger.info("openclaw response completed", { agentId: result.agentId, chatId, durationMs: Date.now() - started });
+    if (isSilentToken(result.reply)) {
+      // Agent chose silence: react instead of sending the literal sentinel.
+      logger.info("silent reply suppressed", { agentId: result.agentId, chatId });
+      await ctx.react(SILENT_REACTION).catch((err) =>
+        logger.warn("silent reaction failed", { error: err instanceof Error ? err.message : String(err) }),
+      );
+      return;
+    }
     await sendReply(ctx, result.reply, logger);
   } catch (err) {
     logger.error("openclaw request failed", { userId, chatId, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) });

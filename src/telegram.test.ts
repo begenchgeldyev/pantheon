@@ -166,3 +166,17 @@ test("a failed welcome message is warned about but does not abort the turn", asy
   expect(h.sent().some((t) => t.includes("Something went wrong"))).toBe(false);
   expect(h.logs.some((l) => l.message === "welcome message failed" && l.severity === "warn")).toBe(true);
 });
+
+import { isSilentToken } from "./telegram";
+
+test("isSilentToken matches the OpenClaw silent sentinels", () => {
+  for (const t of ["NO_REPLY", "no_reply", "  NO_REPLY  ", "*NO_REPLY*", "`NO_REPLY`", "_NO_REPLY_", "HEARTBEAT_OK"]) {
+    expect(isSilentToken(t)).toBe(true);
+  }
+});
+
+test("isSilentToken leaves real replies alone", () => {
+  for (const t of ["Got it, thanks", "NO_REPLY needed here", "The answer is NO_REPLY.", "reply", ""]) {
+    expect(isSilentToken(t)).toBe(false);
+  }
+});
