@@ -19,7 +19,7 @@ function secretMatches(provided: string | null, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-export function resolveNotifyTarget(body: unknown, registry: Registry):
+export function resolveNotifyTarget(body: unknown, registry: Registry, config: Config):
   | { ok: true; chatId: number; agentId: string; text: string }
   | { ok: false; status: 400 | 404; reason: string } {
   if (!body || typeof body !== "object") return { ok: false, status: 400, reason: "bad json" };
@@ -27,9 +27,18 @@ export function resolveNotifyTarget(body: unknown, registry: Registry):
   const text = typeof b.text === "string" ? b.text.trim() : "";
   if (!text) return { ok: false, status: 400, reason: "text required" };
   const agentId = typeof b.agentId === "string" && b.agentId ? b.agentId : MAIN_AGENT_ID;
+
+  // A user's own agent (main for the owner, u_<id> for others) resolves directly.
   const user = registry.findByAgentId(agentId);
-  if (!user) return { ok: false, status: 404, reason: `unknown agent: ${agentId}` };
-  return { ok: true, chatId: user.chatId, agentId, text };
+  if (user) return { ok: true, chatId: user.chatId, agentId, text };
+
+  // Extra owner gods (e.g. athena) have no users row of their own; their pushes
+  // go to the owner's chat — the same chat that owns agent `main`.
+  if (config.ownerGods.includes(agentId)) {
+    const owner = registry.findByAgentId(MAIN_AGENT_ID);
+    if (owner) return { ok: true, chatId: owner.chatId, agentId, text };
+  }
+  return { ok: false, status: 404, reason: `unknown agent: ${agentId}` };
 }
 
 export function createNotifyServer(config: Config, bot: Bot, registry: Registry, logger: Logger) {
@@ -61,7 +70,7 @@ export function createNotifyServer(config: Config, bot: Bot, registry: Registry,
       let body: unknown;
       try { body = await req.json(); } catch { return new Response("bad json", { status: 400 }); }
 
-      const target = resolveNotifyTarget(body, registry);
+      const target = resolveNotifyTarget(body, registry, config);
       if (target.ok === false) {
         logger.warn("notify rejected", { status: target.status, reason: target.reason });
         return new Response(target.reason, { status: target.status });

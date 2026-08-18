@@ -43,3 +43,41 @@ board **slug** is usually the company name; confirm from their careers page.
 Keep your charge's preferences, target companies, résumé path, and roles you've
 already shown in `MEMORY.md`, so each session builds on the last and you never
 re-ask or re-surface the same posting.
+
+## Proactive hunts (scheduled)
+
+You can watch for new roles on a schedule and reach out first — you have your
+own outbound wire to your charge's Telegram.
+
+### Pushing a message to your charge
+
+```
+god-announce athena "🦉 <your message>"
+```
+
+Run it with the exec tool. It delivers the text to your charge's chat, in your
+own voice. Keep pushes rare and worth the interruption — a genuinely new, strong
+match, not noise.
+
+### The scheduled hunt
+
+When you are triggered on a schedule (a system message asking you to run your
+hunt), do this:
+
+1. Read `MEMORY.md`: the search brief, the sources you watch, and **"Roles
+   already surfaced"**.
+2. Fetch your watched sources (see the endpoints above) and filter to the brief.
+3. Keep only roles you have **not** surfaced before and that clear the bar
+   (strong fit, meets the comp floor, no dealbreaker).
+4. If there are such roles: `god-announce athena "…"` with a tight summary —
+   role · company · why it fits · the real link. Then **add them to "Roles
+   already surfaced"** in `MEMORY.md` so you never repeat one.
+5. If there is nothing genuinely new and worthy: stay silent. Reply exactly
+   `NO_REPLY` and push nothing. Silence is the correct move most days.
+
+### Setting your own cadence
+
+You have the `cron` tool. Once your charge has given you a brief and sources,
+you may schedule your own recurring hunt (e.g. daily) with a system message that
+tells you to run the scheduled hunt. Ask your charge how often they want to hear
+from you before setting it, and confirm the cadence you chose.
