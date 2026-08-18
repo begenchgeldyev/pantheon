@@ -9,7 +9,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { Bot, InputFile, type Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
-import telegramifyMarkdown from "telegramify-markdown";
+import { Marked, type Tokens } from "marked";
 import { normalizeUsername, type Config } from "./config";
 import { isAllowedDoc, inboxPathFor } from "./documents";
 import { godsFor, HERMES_AGENT_ID } from "./gods";
@@ -31,10 +31,55 @@ const TELEGRAM_MAX = 4000;
 
 const USER_ERROR = "⚠️ Something went wrong reaching the agent. Please try again.";
 
-// Convert agent Markdown to Telegram MarkdownV2, escaping everything Telegram
-// requires escaped so send never fails on stray punctuation.
+// Convert agent Markdown to Telegram-flavoured HTML. Telegram's HTML mode
+// supports a small whitelist of tags; everything else is degraded to text or
+// a supported analogue (headings → bold, lists → bulleted lines, tables →
+// monospaced <pre> so columns survive, images → link).
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+const renderer = {
+  heading(this: any, { tokens }: Tokens.Heading) { return `<b>${this.parser.parseInline(tokens)}</b>\n\n`; },
+  paragraph(this: any, { tokens }: Tokens.Paragraph) { return `${this.parser.parseInline(tokens)}\n\n`; },
+  strong(this: any, { tokens }: Tokens.Strong) { return `<b>${this.parser.parseInline(tokens)}</b>`; },
+  em(this: any, { tokens }: Tokens.Em) { return `<i>${this.parser.parseInline(tokens)}</i>`; },
+  del(this: any, { tokens }: Tokens.Del) { return `<s>${this.parser.parseInline(tokens)}</s>`; },
+  codespan({ text }: Tokens.Codespan) { return `<code>${esc(text)}</code>`; },
+  code({ text, lang }: Tokens.Code) {
+    const cls = lang ? ` class="language-${esc(lang)}"` : "";
+    return `<pre><code${cls}>${esc(text)}</code></pre>\n\n`;
+  },
+  blockquote(this: any, { tokens }: Tokens.Blockquote) {
+    return `<blockquote>${this.parser.parse(tokens).trim()}</blockquote>\n\n`;
+  },
+  link(this: any, { href, tokens }: Tokens.Link) { return `<a href="${esc(href)}">${this.parser.parseInline(tokens)}</a>`; },
+  image({ href, text }: Tokens.Image) { return `<a href="${esc(href)}">${esc(text || href)}</a>`; },
+  hr() { return "\n"; },
+  br() { return "\n"; },
+  list(this: any, token: Tokens.List) {
+    const items = token.items.map((it: Tokens.ListItem, i: number) => {
+      const marker = token.ordered ? `${(Number(token.start) || 1) + i}. ` : "• ";
+      return `${marker}${this.parser.parse(it.tokens).trim()}`;
+    });
+    return `${items.join("\n")}\n\n`;
+  },
+  table(token: Tokens.Table) {
+    const rows = [token.header.map((c) => c.text), ...token.rows.map((row) => row.map((c) => c.text))];
+    const width = Math.max(...rows.map((row) => row.length));
+    for (const row of rows) while (row.length < width) row.push("");
+    const cols = Array.from({ length: width }, (_, c) => Math.max(...rows.map((row) => row[c]!.length)));
+    const body = rows.map((row) => row.map((cell, c) => cell.padEnd(cols[c]!)).join("  ").trimEnd()).join("\n");
+    return `<pre>${esc(body)}</pre>\n\n`;
+  },
+  html({ text }: Tokens.HTML | Tokens.Tag) { return esc(text); },
+  text(this: any, t: Tokens.Text | Tokens.Escape) {
+    return "tokens" in t && t.tokens ? this.parser.parseInline(t.tokens) : esc(t.text);
+  },
+};
+
+const marked = new Marked({ gfm: true, breaks: false }, { renderer } as any);
+
 export function markdownToTelegram(source: string): string {
-  return telegramifyMarkdown(source, "escape");
+  return (marked.parse(source) as string).replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
@@ -74,9 +119,9 @@ async function sendReply(ctx: Context, source: string, logger: Logger): Promise<
   for (const chunk of splitMessage(source)) {
     const formatted = markdownToTelegram(chunk);
     try {
-      await ctx.reply(formatted, { parse_mode: "MarkdownV2" });
+      await ctx.reply(formatted, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
     } catch (err) {
-      logger.warn("markdown send failed, retrying as plain text", {
+      logger.warn("html send failed, retrying as plain text", {
         error: err instanceof Error ? err.message : String(err),
         sample: formatted.slice(0, 120),
       });
