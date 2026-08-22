@@ -26,7 +26,9 @@ Reminders: agent ──exec its own remind wrapper──► openclaw cron ──
 | `telegram.ts`      | grammY bot: username auth, ensure-user, typing indicator, splitting.  |
 | `registry.ts`      | SQLite: Telegram user ↔ OpenClaw agent.                               |
 | `provisioner.ts`   | Create an isolated agent (CLI + template + tool policy + allowlist).  |
-| `router.ts`        | Agent lookup + session-key scheme.                                    |
+| `router.ts`        | Per-message god choice (pin → keywords → LLM → previous → default) + session keys. |
+| `intent.ts`        | Keyword fast path of the router.                                      |
+| `classifier.ts`    | LLM fallback of the router (Groq, small model, one short completion). |
 | `openclaw.ts`      | Runs one agent turn via the OpenClaw CLI.                             |
 | `openclaw-cli.ts`  | Generic CLI runner for management commands.                           |
 | `notify.ts`        | Loopback endpoint: `{agentId,text}` → the owning user's chat.         |
@@ -270,13 +272,23 @@ place response-shape assumptions live.
 
 ## Gods
 
-Pantheon can host more than one god behind the single bot. The owner talks to
-**Hermes** (`main`, dates & reminders) by default and may summon others.
+Pantheon can host more than one god behind the single bot. For the owner every
+message is routed to the god it is for:
+
+1. a **pinned** god (`/hermes`, `/athena`, `/zeus`) always wins, until `/auto`;
+2. otherwise a keyword pass (`intent.ts`) decides when the signal is clear
+   ("remind me…" → Hermes, "vacancies…" → Athena);
+3. otherwise a small fast model (`classifier.ts`, Groq `PANTHEON_CLASSIFIER_MODEL`)
+   picks a god, knowing who answered the previous message so follow-ups stay put;
+4. otherwise the previous god, else the default (`PANTHEON_ROUTER`, e.g. Zeus —
+   or Hermes when no router god is configured).
+
+Routing is never persisted: only `/<god>` pins a chat.
 
 - `/gods` — list the gods you may summon (the active one is marked ▸).
-- `/hermes [message]`, `/athena [message]`, … — switch to a god (and optionally
-  speak to it in the same message). The choice is sticky per chat until you
-  switch again.
+- `/hermes [message]`, `/athena [message]`, `/zeus [message]` — pin the chat to
+  a god (and optionally speak to it in the same message).
+- `/auto` — unpin; route each message again.
 - Send a **file** (e.g. your résumé) and it lands in the active god's workspace
   `inbox/`, then that god is told about it.
 

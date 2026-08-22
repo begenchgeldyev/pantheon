@@ -74,6 +74,11 @@ export class Registry {
       .run(chatId, agentId, new Date().toISOString());
   }
 
+  /** Forget the chat's pinned god, so routing decides per message again. */
+  clearChatSelection(chatId: number): void {
+    this.db.query("DELETE FROM chat_selection WHERE chat_id = ?").run(chatId);
+  }
+
   findByUserId(tgUserId: number): UserRecord | null {
     const row = this.db.query<Row, [number]>("SELECT * FROM users WHERE tg_user_id = ?").get(tgUserId);
     return row ? toRecord(row) : null;
