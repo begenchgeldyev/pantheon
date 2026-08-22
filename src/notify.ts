@@ -46,9 +46,9 @@ export function createNotifyServer(config: Config, bot: Bot, registry: Registry,
     for (const chunk of splitMessage(source)) {
       const formatted = markdownToTelegram(chunk);
       try {
-        await bot.api.sendMessage(chatId, formatted, { parse_mode: "MarkdownV2" });
+        await bot.api.sendMessage(chatId, formatted, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
       } catch (err) {
-        logger.warn("notify markdown send failed, retrying as plain text", {
+        logger.warn("notify html send failed, retrying as plain text", {
           error: err instanceof Error ? err.message : String(err),
           sample: formatted.slice(0, 120),
         });

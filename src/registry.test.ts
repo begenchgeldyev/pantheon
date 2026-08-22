@@ -37,4 +37,7 @@ test("chat selection is unset, settable, and updatable", () => {
   expect(r.getChatSelection(5)).toBe("athena");
   r.setChatSelection(5, "main");
   expect(r.getChatSelection(5)).toBe("main");
+  r.clearChatSelection(5);
+  expect(r.getChatSelection(5)).toBeNull();
+  r.clearChatSelection(5); // idempotent
 });

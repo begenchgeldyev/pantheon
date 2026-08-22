@@ -11,6 +11,30 @@ import type { UserRecord } from "./registry";
 
 export const HERMES_AGENT_ID = "main";
 
+/** What a god is for — one line each, shown to the intent classifier. */
+export type GodProfile = { id: string; name: string; domain: string };
+
+export const GOD_PROFILES: Record<string, GodProfile> = {
+  main: {
+    id: "main", name: "Hermes",
+    domain: "reminders and notifications; birthdays, anniversaries, appointments, deadlines, renewals, trips and other important dates; scheduling, listing or cancelling reminders; answering his own questions about when/what time",
+  },
+  athena: {
+    id: "athena", name: "Athena",
+    domain: "job hunting and career: vacancies, applications, résumé/CV, cover letters, recruiters, interviews, salary, offers",
+  },
+  zeus: {
+    id: "zeus", name: "Zeus",
+    domain: "everything else: general questions and facts, web search, news, weather, maps, distances, directions, places, travel, small talk and greetings",
+  },
+};
+
+export function godProfile(agentId: string): GodProfile {
+  return GOD_PROFILES[agentId] ?? {
+    id: agentId, name: agentId.charAt(0).toUpperCase() + agentId.slice(1), domain: "a specialist agent",
+  };
+}
+
 export function isOwner(user: UserRecord, config: Config): boolean {
   return user.username === config.ownerUsername;
 }

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createGroqClassifier } from "../classifier";
 import type { Config } from "../config";
 import { ConsoleTransport } from "../logger/console-transport";
 import { Logger } from "../logger/logger";
@@ -9,7 +10,6 @@ import { Provisioner } from "../provisioner";
 import { Registry } from "../registry";
 import { Router } from "../router";
 import { createGroqTranscriber } from "../transcribe";
-import { createPiperSynthesizer } from "../tts";
 import { createBot } from "../telegram";
 import {
   BotToken, CliRunnerToken, ConfigToken, LoggerToken, NotifyServerToken,
@@ -47,7 +47,13 @@ export function initContainers(config: Config) {
   });
   container.register(RouterToken, {
     lifetime: "singleton",
-    factory: (c) => new Router(c.resolve(OpenClawToken), c.resolve(RegistryToken), c.resolve(ConfigToken), c.resolve(LoggerToken)),
+    factory: (c) => {
+      const config = c.resolve(ConfigToken);
+      const classifier = config.groqApiKey && config.classifierModel
+        ? createGroqClassifier(config.groqApiKey, config.classifierModel)
+        : null;
+      return new Router(c.resolve(OpenClawToken), c.resolve(RegistryToken), config, c.resolve(LoggerToken), classifier);
+    },
   });
   container.register(BotToken, {
     lifetime: "singleton",
@@ -56,12 +62,9 @@ export function initContainers(config: Config) {
       const transcriber = config.groqApiKey
         ? createGroqTranscriber(config.groqApiKey, config.groqModel)
         : undefined;
-      const synthesizer = config.piperBin
-        ? createPiperSynthesizer(config.piperBin, config.piperVoicesDir)
-        : undefined;
       return createBot(
         config, c.resolve(RouterToken), c.resolve(ProvisionerToken),
-        c.resolve(RegistryToken), c.resolve(LoggerToken), { transcriber, synthesizer },
+        c.resolve(RegistryToken), c.resolve(LoggerToken), { transcriber },
       );
     },
   });

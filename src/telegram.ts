@@ -7,9 +7,9 @@
 
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { Bot, InputFile, type Context } from "grammy";
+import { Bot, type Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
-import telegramifyMarkdown from "telegramify-markdown";
+import { Marked, type Tokens } from "marked";
 import { normalizeUsername, type Config } from "./config";
 import { isAllowedDoc, inboxPathFor } from "./documents";
 import { godsFor, HERMES_AGENT_ID } from "./gods";
@@ -18,7 +18,6 @@ import type { Provisioner } from "./provisioner";
 import type { Registry, UserRecord } from "./registry";
 import type { Router } from "./router";
 import type { Transcriber } from "./transcribe";
-import type { Synthesizer } from "./tts";
 
 // Display names for the gods, with their emblems.
 const GOD_NAMES: Record<string, string> = { main: "Hermes 🔔", athena: "Athena 🦉", zeus: "Zeus ⚡" };
@@ -31,10 +30,55 @@ const TELEGRAM_MAX = 4000;
 
 const USER_ERROR = "⚠️ Something went wrong reaching the agent. Please try again.";
 
-// Convert agent Markdown to Telegram MarkdownV2, escaping everything Telegram
-// requires escaped so send never fails on stray punctuation.
+// Convert agent Markdown to Telegram-flavoured HTML. Telegram's HTML mode
+// supports a small whitelist of tags; everything else is degraded to text or
+// a supported analogue (headings → bold, lists → bulleted lines, tables →
+// monospaced <pre> so columns survive, images → link).
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+const renderer = {
+  heading(this: any, { tokens }: Tokens.Heading) { return `<b>${this.parser.parseInline(tokens)}</b>\n\n`; },
+  paragraph(this: any, { tokens }: Tokens.Paragraph) { return `${this.parser.parseInline(tokens)}\n\n`; },
+  strong(this: any, { tokens }: Tokens.Strong) { return `<b>${this.parser.parseInline(tokens)}</b>`; },
+  em(this: any, { tokens }: Tokens.Em) { return `<i>${this.parser.parseInline(tokens)}</i>`; },
+  del(this: any, { tokens }: Tokens.Del) { return `<s>${this.parser.parseInline(tokens)}</s>`; },
+  codespan({ text }: Tokens.Codespan) { return `<code>${esc(text)}</code>`; },
+  code({ text, lang }: Tokens.Code) {
+    const cls = lang ? ` class="language-${esc(lang)}"` : "";
+    return `<pre><code${cls}>${esc(text)}</code></pre>\n\n`;
+  },
+  blockquote(this: any, { tokens }: Tokens.Blockquote) {
+    return `<blockquote>${this.parser.parse(tokens).trim()}</blockquote>\n\n`;
+  },
+  link(this: any, { href, tokens }: Tokens.Link) { return `<a href="${esc(href)}">${this.parser.parseInline(tokens)}</a>`; },
+  image({ href, text }: Tokens.Image) { return `<a href="${esc(href)}">${esc(text || href)}</a>`; },
+  hr() { return "\n"; },
+  br() { return "\n"; },
+  list(this: any, token: Tokens.List) {
+    const items = token.items.map((it: Tokens.ListItem, i: number) => {
+      const marker = token.ordered ? `${(Number(token.start) || 1) + i}. ` : "• ";
+      return `${marker}${this.parser.parse(it.tokens).trim()}`;
+    });
+    return `${items.join("\n")}\n\n`;
+  },
+  table(token: Tokens.Table) {
+    const rows = [token.header.map((c) => c.text), ...token.rows.map((row) => row.map((c) => c.text))];
+    const width = Math.max(...rows.map((row) => row.length));
+    for (const row of rows) while (row.length < width) row.push("");
+    const cols = Array.from({ length: width }, (_, c) => Math.max(...rows.map((row) => row[c]!.length)));
+    const body = rows.map((row) => row.map((cell, c) => cell.padEnd(cols[c]!)).join("  ").trimEnd()).join("\n");
+    return `<pre>${esc(body)}</pre>\n\n`;
+  },
+  html({ text }: Tokens.HTML | Tokens.Tag) { return esc(text); },
+  text(this: any, t: Tokens.Text | Tokens.Escape) {
+    return "tokens" in t && t.tokens ? this.parser.parseInline(t.tokens) : esc(t.text);
+  },
+};
+
+const marked = new Marked({ gfm: true, breaks: false }, { renderer } as any);
+
 export function markdownToTelegram(source: string): string {
-  return telegramifyMarkdown(source, "escape");
+  return (marked.parse(source) as string).replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
@@ -74,9 +118,9 @@ async function sendReply(ctx: Context, source: string, logger: Logger): Promise<
   for (const chunk of splitMessage(source)) {
     const formatted = markdownToTelegram(chunk);
     try {
-      await ctx.reply(formatted, { parse_mode: "MarkdownV2" });
+      await ctx.reply(formatted, { parse_mode: "HTML", link_preview_options: { is_disabled: true } });
     } catch (err) {
-      logger.warn("markdown send failed, retrying as plain text", {
+      logger.warn("html send failed, retrying as plain text", {
         error: err instanceof Error ? err.message : String(err),
         sample: formatted.slice(0, 120),
       });
@@ -131,7 +175,8 @@ const HELP = [
   "/start — check the connection",
   "/help — show this help",
   "/gods — list the gods you may summon",
-  "/<god> — summon a god (e.g. /hermes, /athena)",
+  "/<god> — pin the chat to one god (e.g. /hermes, /athena, /zeus)",
+  "/auto — unpin: let the pantheon route each message to the right god",
   "",
   "Send me a file (e.g. your résumé) and it goes to the god you're speaking with.",
   "Send a voice note and I'll transcribe it, then handle it like a message.",
@@ -147,11 +192,10 @@ export function createBot(
   registry: Registry,
   logger: Logger,
   /** `botInfo` skips the getMe call at startup (tests only); `transcriber` enables voice notes. */
-  opts: { botInfo?: UserFromGetMe; transcriber?: Transcriber; synthesizer?: Synthesizer } = {},
+  opts: { botInfo?: UserFromGetMe; transcriber?: Transcriber } = {},
 ): Bot {
   const bot = new Bot(config.botToken, opts.botInfo ? { botInfo: opts.botInfo } : undefined);
   const transcriber = opts.transcriber;
-  const synthesizer = opts.synthesizer;
 
   // --- Authentication: allow-listed Telegram usernames only. ---
   bot.use(async (ctx, next) => {
@@ -204,7 +248,7 @@ export function createBot(
   const godsMenu = (user: UserRecord, active: string): string => {
     const gods = godsFor(user, config);
     const lines = gods.map((g) => `${g === active ? "▸" : "·"} ${godName(g)}`).join("\n");
-    const hint = gods.length > 1 ? "\n\nSummon one with /<name> (e.g. /athena)." : "";
+    const hint = gods.length > 1 ? "\n\nPin the chat to one with /<name> (e.g. /athena); /auto routes each message again." : "";
     return `Gods you may summon:\n${lines}${hint}`;
   };
 
@@ -222,8 +266,15 @@ export function createBot(
     logger.info("god summoned", { userId: ctx.from!.id, chatId: ctx.chat!.id, agentId });
     const msg = ctx.match ? String(ctx.match).trim() : "";
     if (msg) return handleTurn(ctx, router, logger, msg);
-    return ctx.reply(`You now speak with ${godName(agentId)}.`);
+    return ctx.reply(`You now speak with ${godName(agentId)} (pinned — /auto to let the pantheon route again).`);
   };
+  bot.command("auto", (ctx) => {
+    const user = registry.findByUserId(ctx.from!.id)!;
+    if (godsFor(user, config).length < 2) return ctx.reply(`You speak with ${godName(router.activeAgentFor(ctx.from!.id, ctx.chat!.id))}.`);
+    registry.clearChatSelection(ctx.chat!.id);
+    logger.info("god unpinned", { userId: ctx.from!.id, chatId: ctx.chat!.id });
+    return ctx.reply("Unpinned — each message now goes to the god it is for.");
+  });
   bot.command("hermes", summon(HERMES_AGENT_ID));
   for (const g of [...(config.routerAgent ? [config.routerAgent] : []), ...config.ownerGods]) {
     if (/^[a-z][a-z0-9_]*$/.test(g)) bot.command(g, summon(g));
@@ -283,7 +334,7 @@ export function createBot(
     if (!transcript) return ctx.reply("🎙️ I couldn't make out that voice note — try again?");
     logger.info("voice transcribed", { chatId: ctx.chat!.id, chars: transcript.length });
     await ctx.reply(`🎙️ ${transcript}`);
-    await handleTurn(ctx, router, logger, transcript, { synthesizer, voiceReply: true });
+    await handleTurn(ctx, router, logger, transcript);
   });
 
   bot.on("message:text", async (ctx) => {
@@ -300,12 +351,7 @@ export function createBot(
   return bot;
 }
 
-type TurnOpts = { synthesizer?: Synthesizer; voiceReply?: boolean };
-
-// Beyond this length a single voice note is unwieldy; send text only.
-const VOICE_REPLY_MAX_CHARS = 900;
-
-async function handleTurn(ctx: Context, router: Router, logger: Logger, text: string, tts: TurnOpts = {}): Promise<void> {
+async function handleTurn(ctx: Context, router: Router, logger: Logger, text: string): Promise<void> {
   const chatId = ctx.chat?.id;
   const userId = ctx.from?.id;
   if (chatId === undefined || userId === undefined) return;
@@ -323,15 +369,6 @@ async function handleTurn(ctx: Context, router: Router, logger: Logger, text: st
       return;
     }
     await sendReply(ctx, result.reply, logger);
-    // Reply-in-kind: if the user spoke, the god speaks back (short replies only).
-    if (tts.voiceReply && tts.synthesizer && result.reply.length <= VOICE_REPLY_MAX_CHARS) {
-      try {
-        const ogg = await tts.synthesizer(result.reply, result.agentId);
-        await ctx.replyWithVoice(new InputFile(ogg, "reply.ogg"));
-      } catch (err) {
-        logger.warn("voice reply failed", { agentId: result.agentId, error: err instanceof Error ? err.message : String(err) });
-      }
-    }
   } catch (err) {
     logger.error("openclaw request failed", { userId, chatId, durationMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) });
     await ctx.reply(USER_ERROR);

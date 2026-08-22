@@ -16,10 +16,8 @@ export type Config = {
   groqApiKey: string;
   /** Groq transcription model. */
   groqModel: string;
-  /** Piper TTS binary for voice replies. Empty = voice replies disabled. */
-  piperBin: string;
-  /** Directory holding the Piper voice models (<name>.onnx). */
-  piperVoicesDir: string;
+  /** Groq chat model used to route the owner's unclear messages to a god. Empty = keyword routing only. */
+  classifierModel: string;
   /** Executable name or path for the OpenClaw CLI. */
   openclawBin: string;
   /** OpenClaw state dir (holds workspace*, agents/, openclaw.json). */
@@ -112,8 +110,7 @@ export function loadConfig(env: Env = process.env): Config {
 
   const groqApiKey = optional(env, "GROQ_API_KEY", "");
   const groqModel = optional(env, "GROQ_MODEL", "whisper-large-v3");
-  const piperBin = optional(env, "PANTHEON_PIPER_BIN", "");
-  const piperVoicesDir = optional(env, "PANTHEON_PIPER_VOICES", "/opt/piper/voices");
+  const classifierModel = optional(env, "PANTHEON_CLASSIFIER_MODEL", "qwen/qwen3.6-27b");
 
   const openclawBin = optional(env, "OPENCLAW_BIN", "openclaw");
   const openclawStateDir = optional(env, "OPENCLAW_STATE_DIR", "/home/openclaw/.openclaw");
@@ -130,7 +127,7 @@ export function loadConfig(env: Env = process.env): Config {
   const notifySecret = required(env, "NOTIFY_SECRET");
 
   return {
-    botToken, allowedUsernames, ownerUsername, ownerGods, routerAgent, groqApiKey, groqModel, piperBin, piperVoicesDir, openclawBin, openclawStateDir,
+    botToken, allowedUsernames, ownerUsername, ownerGods, routerAgent, groqApiKey, groqModel, classifierModel, openclawBin, openclawStateDir,
     openclawTimeoutMs, dataDir, binDir, remindImplDir, logLevel, notifyHost,
     notifyPort, notifySecret,
   };
