@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createGroqClassifier } from "../classifier";
 import type { Config } from "../config";
 import { ConsoleTransport } from "../logger/console-transport";
 import { Logger } from "../logger/logger";
@@ -46,7 +47,13 @@ export function initContainers(config: Config) {
   });
   container.register(RouterToken, {
     lifetime: "singleton",
-    factory: (c) => new Router(c.resolve(OpenClawToken), c.resolve(RegistryToken), c.resolve(ConfigToken), c.resolve(LoggerToken)),
+    factory: (c) => {
+      const config = c.resolve(ConfigToken);
+      const classifier = config.groqApiKey && config.classifierModel
+        ? createGroqClassifier(config.groqApiKey, config.classifierModel)
+        : null;
+      return new Router(c.resolve(OpenClawToken), c.resolve(RegistryToken), config, c.resolve(LoggerToken), classifier);
+    },
   });
   container.register(BotToken, {
     lifetime: "singleton",

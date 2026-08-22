@@ -175,7 +175,8 @@ const HELP = [
   "/start — check the connection",
   "/help — show this help",
   "/gods — list the gods you may summon",
-  "/<god> — summon a god (e.g. /hermes, /athena)",
+  "/<god> — pin the chat to one god (e.g. /hermes, /athena, /zeus)",
+  "/auto — unpin: let the pantheon route each message to the right god",
   "",
   "Send me a file (e.g. your résumé) and it goes to the god you're speaking with.",
   "Send a voice note and I'll transcribe it, then handle it like a message.",
@@ -247,7 +248,7 @@ export function createBot(
   const godsMenu = (user: UserRecord, active: string): string => {
     const gods = godsFor(user, config);
     const lines = gods.map((g) => `${g === active ? "▸" : "·"} ${godName(g)}`).join("\n");
-    const hint = gods.length > 1 ? "\n\nSummon one with /<name> (e.g. /athena)." : "";
+    const hint = gods.length > 1 ? "\n\nPin the chat to one with /<name> (e.g. /athena); /auto routes each message again." : "";
     return `Gods you may summon:\n${lines}${hint}`;
   };
 
@@ -265,8 +266,15 @@ export function createBot(
     logger.info("god summoned", { userId: ctx.from!.id, chatId: ctx.chat!.id, agentId });
     const msg = ctx.match ? String(ctx.match).trim() : "";
     if (msg) return handleTurn(ctx, router, logger, msg);
-    return ctx.reply(`You now speak with ${godName(agentId)}.`);
+    return ctx.reply(`You now speak with ${godName(agentId)} (pinned — /auto to let the pantheon route again).`);
   };
+  bot.command("auto", (ctx) => {
+    const user = registry.findByUserId(ctx.from!.id)!;
+    if (godsFor(user, config).length < 2) return ctx.reply(`You speak with ${godName(router.activeAgentFor(ctx.from!.id, ctx.chat!.id))}.`);
+    registry.clearChatSelection(ctx.chat!.id);
+    logger.info("god unpinned", { userId: ctx.from!.id, chatId: ctx.chat!.id });
+    return ctx.reply("Unpinned — each message now goes to the god it is for.");
+  });
   bot.command("hermes", summon(HERMES_AGENT_ID));
   for (const g of [...(config.routerAgent ? [config.routerAgent] : []), ...config.ownerGods]) {
     if (/^[a-z][a-z0-9_]*$/.test(g)) bot.command(g, summon(g));
