@@ -214,7 +214,7 @@ docker compose up -d
 
 ```bash
 docker compose ps                    # state should be "running"
-journalctl -t pantheon -f            # structured JSON logs
+docker compose logs -f --tail 50     # structured JSON logs
 ss -tlnp | grep 8477                 # notify endpoint bound on 127.0.0.1
 ls -l /home/openclaw/bin/remind-impl # refreshed by the entrypoint on start
 ```
@@ -254,8 +254,9 @@ only and is marked deprecated.
 Pantheon logs one JSON object per line to the journal:
 
 ```bash
-journalctl -t pantheon -f              # follow (container → journald, tag "pantheon")
-journalctl -t pantheon -n 200 --no-pager
+docker compose logs -f --tail 100      # simplest: container stdout
+sudo journalctl -t pantheon -f         # same lines via the journald driver (entries are
+                                       # root-owned; add yourself to systemd-journal to drop sudo)
 ```
 
 Key events: `bot started`, `rejected unauthorized message`, `provisioning agent`,
