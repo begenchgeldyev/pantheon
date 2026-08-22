@@ -1,0 +1,28 @@
+services:
+  pantheon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pantheon:latest
+    container_name: pantheon
+    restart: unless-stopped
+
+    network_mode: host
+
+    env_file:
+      - /opt/pantheon/.env
+
+    environment:
+      TZ: Etc/UTC
+
+    volumes:
+      - /home/openclaw/.openclaw:/home/openclaw/.openclaw
+      - /opt/pantheon/data:/opt/pantheon/data
+      - /opt/pantheon/.env:/opt/pantheon/.env:ro
+      - /home/openclaw/bin:/home/openclaw/bin
+
+    logging:
+      driver: journald
+      options:
+        tag: pantheon
+
