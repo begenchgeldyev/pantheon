@@ -1,5 +1,5 @@
 #!/bin/sh
-set -euo pipefail
+set -eu
 
 IMPL_SRC="/app/bin/remind-impl"
 IMPL_DST="/home/openclaw/bin/remind-impl"
