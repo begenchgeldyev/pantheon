@@ -1,3 +1,17 @@
+# DEPRECATED as of 2026-08-22.
+#
+# Pantheon now runs as a Docker container managed by docker compose.
+# See docker-compose.yml at the repo root and the deploy section of README.md.
+#
+# This unit file is kept in-repo for reference only. It is NOT installed by the
+# containerized deploy. If it is still enabled on a host, disable it before
+# starting the container, or two Pantheon instances will fight over the
+# Telegram bot token (long-polling conflict):
+#     systemctl --user stop pantheon
+#     systemctl --user disable pantheon
+#     rm ~/.config/systemd/user/pantheon.service
+#     systemctl --user daemon-reload
+
 [Unit]
 Description=Pantheon — Telegram gateway to OpenClaw
 # Start after the network is actually up (Telegram long polling needs it).
