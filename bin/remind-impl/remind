@@ -1,11 +1,6 @@
 #!/bin/bash
-# Schedule a one-shot reminder at a specific time.
-# Usage: remind <agent-id> <ISO-8601 timestamp> <job-name-slug> <message text>
-# Called through a per-agent wrapper that supplies <agent-id>.
 set -euo pipefail
-# Explicit PATH: the inherited one is caller-controlled and must not decide
-# which curl/jq/openclaw we run.
-export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node-v24.15.0/bin
+
 . "$(dirname "$(readlink -f "$0")")/remind-lib"
 if [ "$#" -lt 4 ]; then
   echo "usage: remind <agent-id> <iso-timestamp> <job-name> <message text...>" >&2

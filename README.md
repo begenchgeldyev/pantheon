@@ -43,7 +43,7 @@ Reminders: agent ──exec its own remind wrapper──► openclaw cron ──
 ## Requirements
 
 - A Linux VPS that already runs **OpenClaw** (Pantheon runs on the *same* host).
-- **Bun** (`curl -fsSL https://bun.sh/install | bash`).
+- **Docker** with the compose plugin for production (§7); **Bun** locally for development.
 - A Telegram bot token and the Telegram usernames of the people allowed to use it (below).
 
 Pantheon calls the OpenClaw CLI locally — there is no SSH, no HTTP between
@@ -68,7 +68,7 @@ with `openclaw agents delete u_<id>` if you want the data gone.
 ```bash
 git clone <your-repo> /opt/pantheon
 cd /opt/pantheon
-bun install
+bun install          # local development only; production builds the image (§7)
 ```
 
 ## 4. Configure
@@ -134,10 +134,12 @@ validate the agent id (`main` or `u_<digits>`), the job name
 Deploy:
 
 ```bash
-# 1. implementations
-sudo install -d -m755 /home/openclaw/bin/remind-impl
-sudo install -m755 bin/remind-impl/remind* /home/openclaw/bin/remind-impl/
-sudo install -m644 bin/remind-impl/remind-lib /home/openclaw/bin/remind-impl/remind-lib
+# 1. implementations — the container entrypoint copies bin/remind-impl/ to
+#    /home/openclaw/bin/remind-impl on every start, so nothing to do here once
+#    the container runs. For a non-container install:
+#    sudo install -d -m755 /home/openclaw/bin/remind-impl
+#    sudo install -m755 bin/remind-impl/remind* /home/openclaw/bin/remind-impl/
+#    sudo install -m644 bin/remind-impl/remind-lib /home/openclaw/bin/remind-impl/remind-lib
 sudo install -m755 bin/install-remind-wrappers /home/openclaw/bin/
 
 # 2. the owner's wrappers, on the gateway PATH
@@ -168,51 +170,93 @@ Requirements on the OpenClaw host:
 
   Without it the reminder POST is rejected with 401 and never reaches Telegram.
 
-## 7. Production (systemd)
+## 7. Production (Docker Compose)
 
-`pantheon.service` is included. Before enabling it:
+Pantheon runs as a single Docker container on the same VPS as OpenClaw.
+OpenClaw itself is **not** containerized — its CLI and state directory are
+bind-mounted into the container at identical paths, so no `.env` values change.
 
-1. **Find Bun** and set `ExecStart` accordingly:
-   ```bash
-   which bun    # e.g. /usr/local/bin/bun or /home/openclaw/.bun/bin/bun
-   ```
-2. Set `WorkingDirectory` and `EnvironmentFile` to match your install. **Run
-   Pantheon as the same user as the OpenClaw gateway** (`openclaw` in the shipped
-   unit): the provisioner writes agent workspaces into that user's
-   `~/.openclaw/workspace-*` and mutates OpenClaw's config through the CLI, so a
-   separate `pantheon` user would provision agents the gateway cannot see. Adjust
-   `User`/`Group` only if your OpenClaw user is named differently:
-   ```bash
-   sudo chown -R openclaw:openclaw /opt/pantheon
-   ```
-   If OpenClaw itself runs as a **systemd user unit** (`systemctl --user`), run
-   Pantheon the same way instead: drop the `User`/`Group` lines, install the unit
-   to `~/.config/systemd/user/pantheon.service`, use
-   `WantedBy=default.target`, and enable it with
-   `systemctl --user enable --now pantheon` (plus `loginctl enable-linger openclaw`
-   so it starts at boot).
-3. Install and start:
-   ```bash
-   sudo cp pantheon.service /etc/systemd/system/pantheon.service
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now pantheon
-   ```
+### Prerequisites
 
-The unit restarts on failure, starts after the network is up, and loads config
-from `.env`. Extra sandbox hardening is included but commented out, because it
-can interfere with the `openclaw` CLI reaching its local gateway — enable those
-options one at a time and confirm OpenClaw still works.
+- Docker Engine 24+ with the compose plugin (`docker compose version`), and the
+  deploy user in the `docker` group.
+- The `openclaw` user on the host has UID/GID 1000 (the image runs as 1000:1000
+  so bind-mounted paths are writable).
+- `/opt/pantheon/.env` populated (chmod 600, owned by `openclaw:openclaw`).
+  Set `PANTHEON_DATA_DIR=/opt/pantheon/data` explicitly — the default `./data`
+  would resolve to `/app/data` *inside* the container and be lost on recreate.
+- `/opt/pantheon/data/` exists and is writable by UID 1000 (holds `users.sqlite`).
+- `PANTHEON_NOTIFY_SECRET` set in the OpenClaw gateway env (see §6).
 
-The service user must be able to run the OpenClaw CLI (same host, same user as
-the OpenClaw gateway, so the CLI sees the same state dir and config).
+### First-time cutover from systemd
+
+Only one Pantheon may poll the bot token at a time, so stop the unit first:
+
+```bash
+systemctl --user stop pantheon
+systemctl --user disable pantheon
+rm ~/.config/systemd/user/pantheon.service
+systemctl --user daemon-reload
+```
+
+(`sudo systemctl …` / `/etc/systemd/system/` if you installed it as a system unit.)
+
+### Build and start
+
+```bash
+cd /opt/pantheon
+git pull
+docker compose build
+docker compose up -d
+```
+
+### Verify
+
+```bash
+docker compose ps                    # state should be "running"
+docker compose logs -f --tail 50     # structured JSON logs
+ss -tlnp | grep 8477                 # notify endpoint bound on 127.0.0.1
+ls -l /home/openclaw/bin/remind-impl # refreshed by the entrypoint on start
+```
+
+Then send a message to the bot and ask it for a reminder in ~2 minutes — that
+exercises host cron → `/notify` → grammY end to end.
+
+### Update
+
+```bash
+cd /opt/pantheon && git pull && docker compose up -d --build
+```
+
+### Rollback
+
+```bash
+cd /opt/pantheon && git checkout <previous-sha> && docker compose up -d --build
+```
+
+### What the container sees
+
+| Host path | In container | Mode | Purpose |
+|---|---|---|---|
+| `/home/openclaw/.openclaw` | same | rw | OpenClaw CLI + agent workspaces (`OPENCLAW_BIN`, `OPENCLAW_STATE_DIR` unchanged). |
+| `/opt/pantheon/data` | same | rw | SQLite registry (`users.sqlite` + wal/shm). |
+| `/opt/pantheon/.env` | same | ro | Config; also loaded via `env_file`. |
+| `/home/openclaw/bin` | same | rw | `remind-impl/` (synced by the entrypoint on every start) and per-agent wrapper dirs. |
+
+`network_mode: host` keeps the `127.0.0.1:8477` loopback working for the
+OpenClaw cron → `/notify` POST. Logs go to the journal via the `journald`
+driver, tagged `pantheon`. `pantheon.service` is kept in-repo for reference
+only and is marked deprecated.
+
 
 ## 8. Logs & troubleshooting
 
 Pantheon logs one JSON object per line to the journal:
 
 ```bash
-journalctl -u pantheon -f              # follow
-journalctl -u pantheon -n 200 --no-pager
+docker compose logs -f --tail 100      # simplest: container stdout
+sudo journalctl -t pantheon -f         # same lines via the journald driver (entries are
+                                       # root-owned; add yourself to systemd-journal to drop sudo)
 ```
 
 Key events: `bot started`, `rejected unauthorized message`, `provisioning agent`,
