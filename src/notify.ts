@@ -41,6 +41,40 @@ export function resolveNotifyTarget(body: unknown, registry: Registry, config: C
   return { ok: false, status: 404, reason: `unknown agent: ${agentId}` };
 }
 
+const TELL_TEXT_MAX = 1500;
+const AGENT_ID_RE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/**
+ * Validate a god-to-god /tell request. Membership is the privacy wall: both
+ * ids must belong to the owner's pantheon (main, the router, the owner gods) —
+ * u_* agents are other people's gods and are never reachable.
+ */
+export function resolveTellRequest(body: unknown, registry: Registry, config: Config):
+  | { ok: true; from: string; to: string; text: string; ownerChatId: number; ownerUserId: number }
+  | { ok: false; status: 400 | 404 | 409; reason: string } {
+  if (!body || typeof body !== "object") return { ok: false, status: 400, reason: "bad json" };
+  const b = body as { from?: unknown; to?: unknown; text?: unknown };
+  if (typeof b.from !== "string" || typeof b.to !== "string" || typeof b.text !== "string") {
+    return { ok: false, status: 400, reason: "from, to and text required" };
+  }
+  const text = b.text.trim();
+  if (!text) return { ok: false, status: 400, reason: "text required" };
+  if (text.length > TELL_TEXT_MAX) return { ok: false, status: 400, reason: `text too long (max ${TELL_TEXT_MAX})` };
+  if (!AGENT_ID_RE.test(b.from) || !AGENT_ID_RE.test(b.to)) {
+    return { ok: false, status: 404, reason: "unknown god" };
+  }
+  if (b.from === b.to) return { ok: false, status: 400, reason: "a god does not send word to itself" };
+
+  const pantheon = new Set([MAIN_AGENT_ID, ...(config.routerAgent ? [config.routerAgent] : []), ...config.ownerGods]);
+  if (!pantheon.has(b.from) || !pantheon.has(b.to)) {
+    return { ok: false, status: 404, reason: "unknown god" };
+  }
+
+  const owner = registry.findByAgentId(MAIN_AGENT_ID);
+  if (!owner) return { ok: false, status: 409, reason: "owner not registered yet" };
+  return { ok: true, from: b.from, to: b.to, text, ownerChatId: owner.chatId, ownerUserId: owner.tgUserId };
+}
+
 export function createNotifyServer(config: Config, bot: Bot, registry: Registry, logger: Logger) {
   const send = async (chatId: number, source: string): Promise<void> => {
     for (const chunk of splitMessage(source)) {

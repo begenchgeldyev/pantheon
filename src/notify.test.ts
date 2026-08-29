@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { resolveNotifyTarget } from "./notify";
+import { resolveNotifyTarget, resolveTellRequest } from "./notify";
 import { Registry } from "./registry";
 import { loadConfig } from "./config";
 
@@ -38,4 +38,40 @@ test("unknown agent -> 404, missing text -> 400", () => {
   expect(resolveNotifyTarget({ agentId: "zeus", text: "x" }, reg(), config)).toMatchObject({ ok: false, status: 404 }); // not an owner god
   expect(resolveNotifyTarget({ agentId: "u_42", text: "  " }, reg(), config)).toMatchObject({ ok: false, status: 400 });
   expect(resolveNotifyTarget(null, reg(), config)).toMatchObject({ ok: false, status: 400 });
+});
+
+// --- /tell validation ---
+
+const tellConfig = loadConfig({
+  TELEGRAM_BOT_TOKEN: "t", TELEGRAM_ALLOWED_USERNAMES: "begench",
+  TELEGRAM_OWNER_USERNAME: "begench", PANTHEON_OWNER_GODS: "athena,heracles,aphrodite",
+  PANTHEON_ROUTER: "zeus", NOTIFY_SECRET: "s",
+});
+
+test("tell: a god sends word to another god", () => {
+  expect(resolveTellRequest({ from: "main", to: "aphrodite", text: "Amina's birthday is Sept 7" }, reg(), tellConfig)).toEqual({
+    ok: true, from: "main", to: "aphrodite", text: "Amina's birthday is Sept 7", ownerChatId: 1, ownerUserId: 1,
+  });
+});
+
+test("tell: the router god (zeus) is a pantheon member", () => {
+  expect(resolveTellRequest({ from: "zeus", to: "main", text: "x" }, reg(), tellConfig)).toMatchObject({ ok: true, to: "main" });
+});
+
+test("tell: self-send, empty and oversized text, bad body -> 400", () => {
+  expect(resolveTellRequest({ from: "zeus", to: "zeus", text: "x" }, reg(), tellConfig)).toMatchObject({ ok: false, status: 400 });
+  expect(resolveTellRequest({ from: "main", to: "zeus", text: "   " }, reg(), tellConfig)).toMatchObject({ ok: false, status: 400 });
+  expect(resolveTellRequest({ from: "main", to: "zeus", text: "x".repeat(1501) }, reg(), tellConfig)).toMatchObject({ ok: false, status: 400 });
+  expect(resolveTellRequest(null, reg(), tellConfig)).toMatchObject({ ok: false, status: 400 });
+});
+
+test("tell: ids outside the owner's pantheon -> 404", () => {
+  expect(resolveTellRequest({ from: "u_42", to: "main", text: "x" }, reg(), tellConfig)).toMatchObject({ ok: false, status: 404 });
+  expect(resolveTellRequest({ from: "main", to: "u_42", text: "x" }, reg(), tellConfig)).toMatchObject({ ok: false, status: 404 });
+  expect(resolveTellRequest({ from: "main", to: "poseidon", text: "x" }, reg(), tellConfig)).toMatchObject({ ok: false, status: 404 });
+});
+
+test("tell: no registered owner -> 409", () => {
+  const empty = new Registry(":memory:");
+  expect(resolveTellRequest({ from: "main", to: "zeus", text: "x" }, empty, tellConfig)).toMatchObject({ ok: false, status: 409 });
 });
