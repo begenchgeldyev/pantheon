@@ -27,6 +27,10 @@ export const GOD_PROFILES: Record<string, GodProfile> = {
     id: "zeus", name: "Zeus",
     domain: "everything else: general questions and facts, web search, news, weather, maps, distances, directions, places, travel, small talk and greetings",
   },
+  heracles: {
+    id: "heracles", name: "Heracles",
+    domain: "goals and habits: declaring a goal, breaking it into steps, tracking progress, streaks, check-ins, motivation, accountability, giving up or finishing a goal",
+  },
 };
 
 export function godProfile(agentId: string): GodProfile {

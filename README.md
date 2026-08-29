@@ -319,7 +319,7 @@ place response-shape assumptions live.
 Pantheon can host more than one god behind the single bot. For the owner every
 message is routed to the god it is for:
 
-1. a **pinned** god (`/hermes`, `/athena`, `/zeus`) always wins, until `/auto`;
+1. a **pinned** god (`/hermes`, `/athena`, `/heracles`, `/zeus`) always wins, until `/auto`;
 2. otherwise a keyword pass (`intent.ts`) decides when the signal is clear
    ("remind me…" → Hermes, "vacancies…" → Athena);
 3. otherwise a small fast model (`classifier.ts`, Groq `PANTHEON_CLASSIFIER_MODEL`)
@@ -330,8 +330,8 @@ message is routed to the god it is for:
 Routing is never persisted: only `/<god>` pins a chat.
 
 - `/gods` — list the gods you may summon (the active one is marked ▸).
-- `/hermes [message]`, `/athena [message]`, `/zeus [message]` — pin the chat to
-  a god (and optionally speak to it in the same message).
+- `/hermes [message]`, `/athena [message]`, `/heracles [message]`, `/zeus [message]`
+  — pin the chat to a god (and optionally speak to it in the same message).
 - `/auto` — unpin; route each message again.
 - Send a **file** (e.g. your résumé) and it lands in the active god's workspace
   `inbox/`, then that god is told about it.
@@ -364,6 +364,17 @@ hunting and send your résumé, and she records it in her own workspace. Phase 1
 is **on-demand** — she finds and ranks real roles and weaves a tailored résumé +
 cover letter on request. Proactive scheduled updates and any auto-apply are
 later phases (auto-submission is deliberately not built here).
+
+### Heracles — goals & habits
+
+`gods/heracles/` is the goals-and-habits god. Declare a goal and he breaks it
+into 3–7 **labors** (concrete milestones), keeps the ledger in his `MEMORY.md`,
+and holds you to the work — honest about stalled progress, motivating from your
+own recorded history. With your consent he schedules **check-ins** over the
+same wire Hermes uses (`remind-cron` → `/notify` → your chat); your ordinary
+reminders stay Hermes's charge. He is not web-enabled and holds no calendar —
+his `TOOLS.md` contains a `{{REMIND_BIN}}` placeholder, so render it at install
+time (like the workspace template) to wherever his remind wrappers live.
 
 ### Voice notes
 

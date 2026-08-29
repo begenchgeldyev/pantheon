@@ -18,7 +18,7 @@ if [ "$#" -ne 2 ]; then
   exit 2
 fi
 AGENT="$1"; TARGET="$2"
-if [[ ! "$AGENT" =~ ^(main|u_[0-9]+)$ ]]; then
+if [[ ! "$AGENT" =~ ^[a-z][a-z0-9_]{0,63}$ ]]; then
   echo "install-remind-wrappers: invalid agent id: $AGENT" >&2
   exit 3
 fi

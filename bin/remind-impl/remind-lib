@@ -10,8 +10,8 @@
 
 export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node-v24.15.0/bin
 
-pantheon_check_agent() { # $1 agent id
-  [[ "$1" =~ ^(main|u_[0-9]+)$ ]] && return 0
+pantheon_check_agent() { # $1 agent id — same shape config.ts accepts (covers main, u_<id>, owner gods)
+  [[ "$1" =~ ^[a-z][a-z0-9_]{0,63}$ ]] && return 0
   echo "remind: invalid agent id: $1" >&2
   return 3
 }
