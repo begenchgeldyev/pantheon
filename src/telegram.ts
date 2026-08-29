@@ -20,7 +20,7 @@ import type { Router } from "./router";
 import type { Transcriber } from "./transcribe";
 
 // Display names for the gods, with their emblems.
-const GOD_NAMES: Record<string, string> = { main: "Hermes 🔔", athena: "Athena 🦉", zeus: "Zeus ⚡", heracles: "Heracles 🦁" };
+const GOD_NAMES: Record<string, string> = { main: "Hermes 🔔", athena: "Athena 🦉", zeus: "Zeus ⚡", heracles: "Heracles 🦁", aphrodite: "Aphrodite 🌹" };
 function godName(agentId: string): string {
   return GOD_NAMES[agentId] ?? agentId.charAt(0).toUpperCase() + agentId.slice(1);
 }
@@ -175,7 +175,7 @@ const HELP = [
   "/start — check the connection",
   "/help — show this help",
   "/gods — list the gods you may summon",
-  "/<god> — pin the chat to one god (e.g. /hermes, /athena, /heracles, /zeus)",
+  "/<god> — pin the chat to one god (e.g. /hermes, /athena, /heracles, /aphrodite, /zeus)",
   "/auto — unpin: let the pantheon route each message to the right god",
   "",
   "Send me a file (e.g. your résumé) and it goes to the god you're speaking with.",

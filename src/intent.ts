@@ -21,15 +21,22 @@ const HERMES_RE =
 const ATHENA_RE =
   /\b(job|jobs|vacanc\w*|hiring|hire me|apply|applicat\w*|resume|\bcv\b|cover letter|recruiter|interview|salary|compensation|career|posting|opening|remote work|greenhouse|lever\.co|ashby)\b/;
 
+// Deliberately narrow: "gift for her birthday" should match both Aphrodite and
+// Hermes and fall through to the LLM, not hard-route on the first keyword.
+const APHRODITE_RE =
+  /\b(gift|gifts|date night|date idea\w*|love note|love letter|romantic|romance|girlfriend|boyfriend|my wife|my husband|relationship\w*|dating|crush|valentines?|flowers for)\b/;
+
 /**
  * The specialist this message is clearly for, or null.
- * `athenaId` is the owner's job-hunt agent id (from config.ownerGods), if any.
+ * `athenaId` / `aphroditeId` are the owner's specialist agent ids (from
+ * config.ownerGods), if any. Exactly one matching signal wins; none or
+ * several → null (ambiguous, let the LLM or the previous god decide).
  */
-export function classifyIntent(text: string, athenaId: string | null): string | null {
+export function classifyIntent(text: string, athenaId: string | null, aphroditeId: string | null = null): string | null {
   const s = fold(text);
-  const hermes = HERMES_RE.test(s);
-  const athena = athenaId !== null && ATHENA_RE.test(s);
-  if (hermes && !athena) return HERMES_AGENT_ID;
-  if (athena && !hermes) return athenaId;
-  return null; // no signal, or both → ambiguous
+  const matches: string[] = [];
+  if (HERMES_RE.test(s)) matches.push(HERMES_AGENT_ID);
+  if (athenaId !== null && ATHENA_RE.test(s)) matches.push(athenaId);
+  if (aphroditeId !== null && APHRODITE_RE.test(s)) matches.push(aphroditeId);
+  return matches.length === 1 ? matches[0]! : null;
 }

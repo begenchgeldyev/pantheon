@@ -19,6 +19,7 @@ import type { Registry } from "./registry";
 import type { OpenClawClient } from "./types";
 
 const ATHENA_AGENT_ID = "athena";
+const APHRODITE_AGENT_ID = "aphrodite";
 
 export type RouteRequest = { userId: number; chatId: number; text: string };
 export type RouteResult = { agentId: string; reply: string };
@@ -70,7 +71,8 @@ export class Router {
     if (pinned && gods.includes(pinned)) return { agentId: pinned, method: "pinned" };
 
     const athenaId = gods.includes(ATHENA_AGENT_ID) ? ATHENA_AGENT_ID : null;
-    const byKeyword = classifyIntent(req.text, athenaId);
+    const aphroditeId = gods.includes(APHRODITE_AGENT_ID) ? APHRODITE_AGENT_ID : null;
+    const byKeyword = classifyIntent(req.text, athenaId, aphroditeId);
     if (byKeyword && gods.includes(byKeyword)) return { agentId: byKeyword, method: "keyword" };
 
     const previous = this.lastAgent.get(req.chatId) ?? null;

@@ -319,7 +319,7 @@ place response-shape assumptions live.
 Pantheon can host more than one god behind the single bot. For the owner every
 message is routed to the god it is for:
 
-1. a **pinned** god (`/hermes`, `/athena`, `/heracles`, `/zeus`) always wins, until `/auto`;
+1. a **pinned** god (`/hermes`, `/athena`, `/heracles`, `/aphrodite`, `/zeus`) always wins, until `/auto`;
 2. otherwise a keyword pass (`intent.ts`) decides when the signal is clear
    ("remind me…" → Hermes, "vacancies…" → Athena);
 3. otherwise a small fast model (`classifier.ts`, Groq `PANTHEON_CLASSIFIER_MODEL`)
@@ -330,8 +330,9 @@ message is routed to the god it is for:
 Routing is never persisted: only `/<god>` pins a chat.
 
 - `/gods` — list the gods you may summon (the active one is marked ▸).
-- `/hermes [message]`, `/athena [message]`, `/heracles [message]`, `/zeus [message]`
-  — pin the chat to a god (and optionally speak to it in the same message).
+- `/hermes [message]`, `/athena [message]`, `/heracles [message]`,
+  `/aphrodite [message]`, `/zeus [message]` — pin the chat to a god (and
+  optionally speak to it in the same message).
 - `/auto` — unpin; route each message again.
 - Send a **file** (e.g. your résumé) and it lands in the active god's workspace
   `inbox/`, then that god is told about it.
@@ -375,6 +376,18 @@ same wire Hermes uses (`remind-cron` → `/notify` → your chat); your ordinary
 reminders stay Hermes's charge. He is not web-enabled and holds no calendar —
 his `TOOLS.md` contains a `{{REMIND_BIN}}` placeholder, so render it at install
 time (like the workspace template) to wherever his remind wrappers live.
+
+### Aphrodite — matters of the heart
+
+`gods/aphrodite/` is the relationships god. She keeps a private ledger of the
+people who matter (tastes, sizes, wishes mentioned in passing, sore subjects),
+turns it into gift ideas and drafted messages — love notes, apologies, hard
+conversations — and counsels through conflict. She **never contacts anyone**:
+she drafts, you send. With consent she schedules preparation and stay-in-touch
+nudges over the reminder wire; the reminders of dates themselves stay Hermes's.
+Not web-enabled, no calendar; her `TOOLS.md` has the same `{{REMIND_BIN}}`
+placeholder to render at install time. Her ledger is the most sensitive data in
+the pantheon — her policy is workspace-only fs, exec-allowlist only.
 
 ### Voice notes
 

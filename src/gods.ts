@@ -31,6 +31,10 @@ export const GOD_PROFILES: Record<string, GodProfile> = {
     id: "heracles", name: "Heracles",
     domain: "goals and habits: declaring a goal, breaking it into steps, tracking progress, streaks, check-ins, motivation, accountability, giving up or finishing a goal",
   },
+  aphrodite: {
+    id: "aphrodite", name: "Aphrodite",
+    domain: "relationships and loved ones: partner, family, friends; gift ideas and what to give someone, planning dates and romantic occasions, writing messages, love notes and apologies, conflicts and difficult conversations with people, dating, staying in touch",
+  },
 };
 
 export function godProfile(agentId: string): GodProfile {
