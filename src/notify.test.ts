@@ -1,7 +1,9 @@
 import { test, expect } from "bun:test";
-import { resolveNotifyTarget, resolveTellRequest } from "./notify";
+import { makeTellHandler, resolveNotifyTarget, resolveTellRequest } from "./notify";
 import { Registry } from "./registry";
 import { loadConfig } from "./config";
+import { Logger } from "./logger/logger";
+import type { SendMessageInput } from "./types";
 
 const config = loadConfig({
   TELEGRAM_BOT_TOKEN: "t", TELEGRAM_ALLOWED_USERNAMES: "begench",
@@ -74,4 +76,59 @@ test("tell: ids outside the owner's pantheon -> 404", () => {
 test("tell: no registered owner -> 409", () => {
   const empty = new Registry(":memory:");
   expect(resolveTellRequest({ from: "main", to: "zeus", text: "x" }, empty, tellConfig)).toMatchObject({ ok: false, status: 409 });
+});
+
+// --- /tell dispatch (makeTellHandler) ---
+
+const silentLogger = new Logger({ write: () => {} }, "error");
+
+function tellHandler(reply: () => Promise<string> = async () => "Filed — the day is inscribed.") {
+  const calls: SendMessageInput[] = [];
+  const sent: Array<{ chatId: number; text: string }> = [];
+  const handler = makeTellHandler({
+    config: tellConfig, registry: reg(), logger: silentLogger,
+    client: { async sendMessage(input) { calls.push(input); return reply(); } },
+    send: async (chatId, text) => { sent.push({ chatId, text }); },
+  });
+  return { handler, calls, sent };
+}
+
+test("tell: dispatches a turn to the target god and relays the ack to the owner", async () => {
+  const { handler, calls, sent } = tellHandler();
+  const res = await handler({ from: "main", to: "aphrodite", text: "Amina's birthday is Sept 7" });
+  expect(res.status).toBe(200);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]!.agentId).toBe("aphrodite");
+  expect(calls[0]!.sessionKey).toBe("telegram:1:1");
+  expect(calls[0]!.message.startsWith('[system] Word arrives from Hermes 🔔: "Amina\'s birthday is Sept 7".')).toBe(true);
+  expect(sent).toHaveLength(1);
+  expect(sent[0]!.chatId).toBe(1);
+  expect(sent[0]!.text).toContain("Aphrodite");
+  expect(sent[0]!.text).toContain("Filed");
+});
+
+test("tell: loop guard — the receiving god cannot send while its turn runs", async () => {
+  let release!: (v: string) => void;
+  const pending = new Promise<string>((r) => { release = r; });
+  const { handler } = tellHandler(() => pending);
+  const first = handler({ from: "main", to: "aphrodite", text: "x" });
+  await Bun.sleep(0); // let the dispatch reach the client
+  expect((await handler({ from: "aphrodite", to: "main", text: "y" })).status).toBe(409);
+  release("done");
+  expect((await first).status).toBe(200);
+  expect((await handler({ from: "aphrodite", to: "main", text: "y" })).status).toBe(200); // freed after the turn
+});
+
+test("tell: client failure -> 502 and no ack is sent", async () => {
+  const { handler, sent } = tellHandler(async () => { throw new Error("gateway down"); });
+  expect((await handler({ from: "main", to: "zeus", text: "x" })).status).toBe(502);
+  expect(sent).toHaveLength(0);
+});
+
+test("tell: rate cap — the 11th word inside a minute is refused", async () => {
+  const { handler } = tellHandler();
+  for (let i = 0; i < 10; i++) {
+    expect((await handler({ from: "main", to: "zeus", text: `word ${i}` })).status).toBe(200);
+  }
+  expect((await handler({ from: "main", to: "zeus", text: "one too many" })).status).toBe(429);
 });

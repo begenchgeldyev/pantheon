@@ -9,7 +9,8 @@ import type { Config } from "./config";
 import { MAIN_AGENT_ID } from "./constants";
 import type { Logger } from "./logger/logger";
 import type { Registry } from "./registry";
-import { markdownToTelegram, splitMessage } from "./telegram";
+import { godName, markdownToTelegram, splitMessage } from "./telegram";
+import type { OpenClawClient } from "./types";
 
 /** Constant-time secret comparison so a wrong header leaks no timing signal. */
 function secretMatches(provided: string | null, expected: string): boolean {
@@ -75,7 +76,74 @@ export function resolveTellRequest(body: unknown, registry: Registry, config: Co
   return { ok: true, from: b.from, to: b.to, text, ownerChatId: owner.chatId, ownerUserId: owner.tgUserId };
 }
 
-export function createNotifyServer(config: Config, bot: Bot, registry: Registry, logger: Logger) {
+const TELL_RATE_LIMIT = 10;
+const TELL_RATE_WINDOW_MS = 60_000;
+
+type TellDeps = {
+  config: Config;
+  registry: Registry;
+  logger: Logger;
+  client: OpenClawClient;
+  send: (chatId: number, text: string) => Promise<void>;
+};
+
+/**
+ * God-to-god word: validate, run one turn on the target god (in the owner's
+ * session with it), relay the target's one-line acknowledgment to the owner.
+ * While a god's tell-turn runs, tells FROM that god are refused — an A→B→A
+ * chain dies at one hop no matter what the prompt says.
+ */
+export function makeTellHandler(deps: TellDeps) {
+  const inFlight = new Set<string>();
+  const stamps: number[] = [];
+  return async (body: unknown): Promise<{ status: number; reason?: string }> => {
+    const req = resolveTellRequest(body, deps.registry, deps.config);
+    if (req.ok === false) {
+      deps.logger.warn("tell rejected", { status: req.status, reason: req.reason });
+      return { status: req.status, reason: req.reason };
+    }
+    if (inFlight.has(req.from)) {
+      deps.logger.warn("tell loop refused", { from: req.from, to: req.to });
+      return { status: 409, reason: "sender is receiving a tell" };
+    }
+    const now = Date.now();
+    while (stamps.length > 0 && now - stamps[0]! > TELL_RATE_WINDOW_MS) stamps.shift();
+    if (stamps.length >= TELL_RATE_LIMIT) {
+      deps.logger.warn("tell rate capped", { from: req.from, to: req.to });
+      return { status: 429, reason: "too many tells" };
+    }
+    stamps.push(now);
+
+    const frame =
+      `[system] Word arrives from ${godName(req.from)}: "${req.text}". ` +
+      `File what matters in your memory, then acknowledge in one line, in your own voice. ` +
+      `Do not send word onward in response — replies to gods are not carried.`;
+    let reply: string;
+    inFlight.add(req.to);
+    try {
+      reply = await deps.client.sendMessage({
+        agentId: req.to,
+        message: frame,
+        sessionKey: `telegram:${req.ownerUserId}:${req.ownerChatId}`,
+      });
+    } catch (err) {
+      deps.logger.error("tell failed", { from: req.from, to: req.to, error: err instanceof Error ? err.message : String(err) });
+      return { status: 502, reason: "the word did not arrive" };
+    } finally {
+      inFlight.delete(req.to);
+    }
+    try {
+      await deps.send(req.ownerChatId, `${godName(req.to)}: ${reply}`);
+    } catch (err) {
+      deps.logger.error("tell ack send failed", { from: req.from, to: req.to, error: err instanceof Error ? err.message : String(err) });
+      return { status: 502, reason: "word delivered but the acknowledgment failed" };
+    }
+    deps.logger.info("tell delivered", { from: req.from, to: req.to, chars: req.text.length });
+    return { status: 200 };
+  };
+}
+
+export function createNotifyServer(config: Config, bot: Bot, registry: Registry, logger: Logger, client: OpenClawClient) {
   const send = async (chatId: number, source: string): Promise<void> => {
     for (const chunk of splitMessage(source)) {
       const formatted = markdownToTelegram(chunk);
@@ -91,18 +159,29 @@ export function createNotifyServer(config: Config, bot: Bot, registry: Registry,
     }
   };
 
+  const handleTell = makeTellHandler({ config, registry, logger, client, send });
+
   return Bun.serve({
     hostname: config.notifyHost,
     port: config.notifyPort,
     async fetch(req) {
       const url = new URL(req.url);
-      if (req.method !== "POST" || url.pathname !== "/notify") return new Response("not found", { status: 404 });
+      if (req.method !== "POST" || (url.pathname !== "/notify" && url.pathname !== "/tell")) {
+        return new Response("not found", { status: 404 });
+      }
       if (!secretMatches(req.headers.get("x-pantheon-secret"), config.notifySecret)) {
         logger.warn("notify unauthorized", { path: url.pathname });
         return new Response("unauthorized", { status: 401 });
       }
       let body: unknown;
       try { body = await req.json(); } catch { return new Response("bad json", { status: 400 }); }
+
+      if (url.pathname === "/tell") {
+        const res = await handleTell(body);
+        return res.status === 200
+          ? new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } })
+          : new Response(res.reason ?? "tell failed", { status: res.status });
+      }
 
       const target = resolveNotifyTarget(body, registry, config);
       if (target.ok === false) {

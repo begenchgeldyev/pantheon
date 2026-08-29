@@ -71,7 +71,7 @@ export function initContainers(config: Config) {
   container.register(NotifyServerToken, {
     lifetime: "singleton",
     factory: (c) => createNotifyServer(
-      c.resolve(ConfigToken), c.resolve(BotToken), c.resolve(RegistryToken), c.resolve(LoggerToken),
+      c.resolve(ConfigToken), c.resolve(BotToken), c.resolve(RegistryToken), c.resolve(LoggerToken), c.resolve(OpenClawToken),
     ),
   });
   return container;

@@ -21,7 +21,7 @@ import type { Transcriber } from "./transcribe";
 
 // Display names for the gods, with their emblems.
 const GOD_NAMES: Record<string, string> = { main: "Hermes 🔔", athena: "Athena 🦉", zeus: "Zeus ⚡", heracles: "Heracles 🦁", aphrodite: "Aphrodite 🌹" };
-function godName(agentId: string): string {
+export function godName(agentId: string): string {
   return GOD_NAMES[agentId] ?? agentId.charAt(0).toUpperCase() + agentId.slice(1);
 }
 
