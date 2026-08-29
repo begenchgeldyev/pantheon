@@ -389,6 +389,20 @@ Not web-enabled, no calendar; her `TOOLS.md` has the same `{{REMIND_BIN}}`
 placeholder to render at install time. Her ledger is the most sensitive data in
 the pantheon — her policy is workspace-only fs, exec-allowlist only.
 
+### Word between gods (`tell`)
+
+Gods are isolated agents and OpenClaw offers no cross-agent messaging, so
+Pantheon carries the word: each owner god has an allowlisted `tell` wrapper
+(sender id baked in) that POSTs to the loopback `/tell` endpoint. Pantheon
+validates both ids against the owner's pantheon (`u_<id>` agents are never
+reachable), runs one turn on the target god in the owner's session with it,
+and always relays the target's one-line acknowledgment to the owner's chat —
+so "Hermes, set Amina's birthday Sept 7 and tell Aphrodite" ends with both an
+inscription and a 🌹 acknowledgment. Push-only (a fact, never a question, never
+another god's ledger), one hop by construction (while a god's tell-turn runs,
+tells *from* it are refused), rate-capped, and a failed delivery is a non-zero
+exit the sender must report honestly.
+
 ### Voice notes
 
 Send a voice message and Pantheon transcribes it (Groq Whisper), echoes what it
