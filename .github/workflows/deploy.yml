@@ -1,0 +1,34 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up ssh
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          ssh -o IdentitiesOnly=yes \
+          "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+          'set -euo pipefail
+           cd /opt/pantheon
+           git fetch origin main
+           git reset --hard origin/main
+           docker compose up -d --build
+           sleep 5
+           state=$(docker compose ps --format "{{.State}}")
+           [ "$state" = running ] || { docker compose logs --tail 30; exit 1; }'
