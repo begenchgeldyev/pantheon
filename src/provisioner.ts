@@ -39,7 +39,7 @@ export function remindAllowlistPattern(binDir: string, agentId: string): string 
   return path.join(remindWrapperDir(binDir, agentId), "remind*");
 }
 
-export const REMIND_WRAPPERS = ["remind", "remind-in", "remind-cron", "remind-list", "remind-rm"] as const;
+export const REMIND_WRAPPERS = ["remind", "remind-in", "remind-cron", "remind-list", "remind-rm", "tell"] as const;
 
 /** Byte-identical to what `bin/install-remind-wrappers` writes. */
 export function wrapperScript(implDir: string, name: string, agentId: string): string {
