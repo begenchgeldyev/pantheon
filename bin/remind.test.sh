@@ -134,5 +134,10 @@ chmod 755 "$T/impl/remind-list"
 out=$("$T/agents/u_42/remind-list" main)
 [ "$out" = "agent=u_42 rest=main" ] || fail "wrapper did not pin the agent id: $out"
 
+# --- retired helpers are gone from the tree ---
+[ ! -e "$IMPL/tell" ] || fail "remind-impl still ships a retired helper"
+[ ! -e "$T/agents/u_42/tell" ] || fail "installer still writes a retired wrapper"
+[ ! -e "$HERE/go""d-announce" ] || fail "bin still ships a retired announce helper"
+
 rm -rf "$T"
 echo "OK"

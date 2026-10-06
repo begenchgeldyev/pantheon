@@ -10,8 +10,8 @@
 # NOT allowlisted for user agents.
 #
 # The owner's wrappers go into /home/openclaw/bin (already on PATH); user
-# wrappers are installed by Pantheon's provisioner into
-# <binDir>/agents/<agent-id>/ (identical content — keep the two in sync).
+# wrappers are installed by hand into /home/openclaw/bin/agents/<agent-id>/
+# (identical content — keep the two in sync).
 set -euo pipefail
 if [ "$#" -ne 2 ]; then
   echo "usage: install-remind-wrappers <agent-id> <target-dir>" >&2
@@ -24,7 +24,7 @@ if [[ ! "$AGENT" =~ ^[a-z][a-z0-9_]{0,63}$ ]]; then
 fi
 IMPL_DIR="${REMIND_IMPL_DIR:-/home/openclaw/bin/remind-impl}"
 mkdir -p "$TARGET"
-for name in remind remind-in remind-cron remind-list remind-rm tell; do
+for name in remind remind-in remind-cron remind-list remind-rm; do
   printf '#!/bin/sh\nexec %s/%s %s "$@"\n' "$IMPL_DIR" "$name" "$AGENT" > "$TARGET/$name"
   chmod 755 "$TARGET/$name"
 done
