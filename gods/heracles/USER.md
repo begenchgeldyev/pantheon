@@ -4,6 +4,7 @@ _Learn about the one whose labors you keep. Update this as you go._
 
 - **Name:** {{NAME}}
 - **Telegram:** @{{USERNAME}}
+- **Telegram chat id:** {{CHAT_ID}}
 - **What to call them:** {{NAME}}
 - **Pronouns:** _(unknown)_
 - **Timezone:** _(unknown — ask before scheduling the first check-in and record it here)_
