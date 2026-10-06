@@ -14,7 +14,7 @@ pantheon_check_agent u_42 || fail "u_42 is a valid agent id"
 ( pantheon_check_agent "u_42; id" 2>/dev/null ) && fail "injection id must be rejected" || true
 
 # --- agent id validation (the id comes from the wrapper, never from the caller) ---
-"$IMPL/remind-list" evil 2>/dev/null && fail "remind-list bad agent" || [ $? -eq 3 ]
+"$IMPL/remind-list" Evil 2>/dev/null && fail "remind-list bad agent" || [ $? -eq 3 ]
 "$IMPL/remind-list" "u_42; id" 2>/dev/null && fail "remind-list injection" || [ $? -eq 3 ]
 "$IMPL/remind" main-evil 2030-01-01T00:00:00Z n msg 2>/dev/null && fail "remind bad agent" || [ $? -eq 3 ]
 "$IMPL/remind-cron" "" "0 9 * * *" n msg 2>/dev/null && fail "remind-cron empty agent" || [ $? -eq 3 ]
@@ -46,8 +46,8 @@ for name in remind remind-in remind-cron remind-list remind-rm; do
   [ "$(cat "$w")" = "$expected" ] || fail "wrapper $name content: $(cat "$w")"
 done
 "$HERE/install-remind-wrappers" 2>/dev/null && fail "installer usage" || [ $? -eq 2 ]
-"$HERE/install-remind-wrappers" "evil" "$T/agents/evil" 2>/dev/null && fail "installer bad agent" || [ $? -eq 3 ]
-[ ! -d "$T/agents/evil" ] || fail "installer created a dir for an invalid agent"
+"$HERE/install-remind-wrappers" "Evil" "$T/agents/Evil" 2>/dev/null && fail "installer bad agent" || [ $? -eq 3 ]
+[ ! -d "$T/agents/Evil" ] || fail "installer created a dir for an invalid agent"
 
 # A wrapper really does pin the agent id: the impl sees u_42 even when the
 # caller passes another id as its first argument.
