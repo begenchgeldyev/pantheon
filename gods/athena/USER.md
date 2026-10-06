@@ -4,6 +4,7 @@ _Learn about the person whose work you tend. Update this as you go._
 
 - **Name:** {{NAME}}
 - **Telegram:** @{{USERNAME}}
+- **Telegram chat id:** {{CHAT_ID}}
 - **What to call them:** {{NAME}}
 - **Pronouns:** _(unknown)_
 - **Timezone:** _(unknown — ask when it matters for a role's location)_
@@ -17,4 +18,4 @@ _(Fill this in from your first conversation and keep it current — it is the br
 - **Min compensation:** _(unknown — ask)_
 - **Dealbreakers:** _(unknown — ask)_
 - **Target companies:** _(none yet)_
-- **Résumé path:** _(none yet — arrives in inbox/ when uploaded)_
+- **Résumé path:** _(none yet — Zeus will pass its path when uploaded)_
