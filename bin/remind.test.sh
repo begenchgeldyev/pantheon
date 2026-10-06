@@ -5,6 +5,15 @@ IMPL="$HERE/remind-impl"
 . "$IMPL/remind-lib"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# --- PATH: which openclaw we run is fixed by the lib, never by the caller ---
+case "$PATH" in
+  *":/home/openclaw/.openclaw/tools/node/bin" ) : ;;
+  * ) fail "PATH after sourcing remind-lib: $PATH" ;;
+esac
+case "$PATH" in
+  *"node-""v24"* ) fail "remind-lib PATH still points at the removed node dir" ;;
+esac
+
 T=$(mktemp -d)
 
 # --- helpers ---

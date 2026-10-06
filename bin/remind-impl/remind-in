@@ -5,8 +5,8 @@
 
 set -euo pipefail
 # Explicit PATH: the inherited one is caller-controlled and must not decide
-# which curl/jq/openclaw we run.
-export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node-v24.15.0/bin
+# which jq/openclaw we run.
+export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node/bin
 HERE="$(dirname "$(readlink -f "$0")")"
 . "$HERE/remind-lib"
 if [ "$#" -lt 4 ]; then

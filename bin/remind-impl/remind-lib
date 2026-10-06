@@ -8,7 +8,7 @@
 # one agent is allowed to exec (per-agent approvals allowlist) and hard-codes
 # its id — the allowlist is the only unforgeable part of the chain.
 
-export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node-v24.15.0/bin
+export PATH=/usr/local/bin:/usr/bin:/bin:/home/openclaw/.openclaw/tools/node/bin
 
 pantheon_check_agent() { # $1 agent id — same shape config.ts accepts (covers main, u_<id>, owner gods)
   [[ "$1" =~ ^[a-z][a-z0-9_]{0,63}$ ]] && return 0
