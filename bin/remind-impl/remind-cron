@@ -17,7 +17,8 @@ if [[ ! "$EXPR" =~ ^[0-9*] ]]; then
   exit 2
 fi
 pantheon_check_name "$NAME"
-openclaw cron add "${AGENT}--${NAME}" --agent "$AGENT" --cron "$EXPR" \
-  --command "$NOTIFY_CMD" \
-  --command-input "$(notify_body "$AGENT" "$MSG")" \
-  --best-effort-deliver
+[ -n "$MSG" ] || { echo "remind-cron: empty message" >&2; exit 2; }
+CHAT="$(pantheon_chat_for_agent "$AGENT")"
+exec openclaw cron add --name="${AGENT}--${NAME}" --agent="$AGENT" --cron="$EXPR" \
+  --command-argv='["/bin/cat"]' --command-input="$MSG" \
+  --announce --channel=telegram --to="$CHAT"
