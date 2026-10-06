@@ -28,7 +28,10 @@ jobs:
            cd /opt/pantheon
            git fetch origin main
            git reset --hard origin/main
-           docker compose up -d --build
-           sleep 5
-           state=$(docker compose ps --format "{{.State}}")
-           [ "$state" = running ] || { docker compose logs --tail 30; exit 1; }'
+           bash bin/remind.test.sh
+           # OpenClaw polls the bot token now; a second poller (the old container) breaks it.
+           docker rm -f pantheon >/dev/null 2>&1 || true
+           install -d -m 755 /home/openclaw/bin/remind-impl
+           for f in remind remind-in remind-cron remind-list remind-rm; do install -m 755 "bin/remind-impl/$f" /home/openclaw/bin/remind-impl/; done
+           install -m 644 bin/remind-impl/remind-lib /home/openclaw/bin/remind-impl/
+           install -m 755 bin/install-remind-wrappers /home/openclaw/bin/'
