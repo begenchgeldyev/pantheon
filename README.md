@@ -1,413 +1,282 @@
 # Pantheon
 
-Pantheon is a small **Telegram gateway to [OpenClaw]** for a hand-picked group
-of people. Each allowed Telegram user gets their own isolated OpenClaw agent
-(workspace, memory, sessions, reminders); Pantheon authenticates by Telegram
-username, provisions the agent on first contact, routes turns to it via the
-OpenClaw CLI and delivers scheduled reminders back to the right chat.
+Pantheon is the owner's household of [OpenClaw] agents — the "gods" — reached
+through Telegram. OpenClaw's own Telegram channel now carries every message; this
+repository holds what OpenClaw does not ship: the gods' persona templates
+(`gods/`), the template for a non-owner user's own agent (`workspace-template/`),
+and the reminder helpers (`bin/`).
+
+## History
+
+Until October 2026 this repository was also a Bun service (grammY bot) in front
+of OpenClaw: it authenticated users by username, provisioned an agent per user,
+routed the owner's messages between gods (pin → keywords → LLM classifier),
+transcribed voice notes, saved uploads to `inbox/`, and delivered reminders and
+god-to-god word through loopback `/notify` and `/tell` endpoints. OpenClaw
+2026.9.7 does all of that natively, so the service (`src/`, Docker files,
+`pantheon.service`) was retired and deleted. The migration design and cutover are
+in `docs/superpowers/specs/2026-09-30-native-telegram-migration-design.md`.
 
 ## Architecture
 
 ```text
-Telegram (allow-listed usernames)
-   │
-   ▼
-Pantheon ── auth ── registry (sqlite) ── provisioner ── Router ── OpenClaw CLI ──► OpenClaw Gateway
-                                                                                    ├── main   (owner)
-                                                                                    ├── u_<id> (user A)
-                                                                                    └── u_<id> (user B)
-Reminders: agent ──exec its own remind wrapper──► openclaw cron ──POST /notify {agentId,text}──► Pantheon ──► Telegram
+Telegram (owner) ──► OpenClaw channels.telegram ── binding ──► zeus (agent:zeus:main)
+                                                                   │ sessions_send
+                                                                   ▼
+Telegram ◄── message tool ── specialist (agent:main:main = Hermes, agent:athena:main, …)
+
+Reminders: god ──exec its own wrapper──► bin/remind-impl ──► openclaw cron add
+           (command job: /bin/cat <text>) ──► OpenClaw announces stdout ──► Telegram
 ```
 
-| File               | Responsibility                                                        |
-| ------------------ | --------------------------------------------------------------------- |
-| `index.ts`         | Wire everything together, start polling, graceful shutdown.           |
-| `config.ts`        | Load & validate environment variables at startup.                     |
-| `telegram.ts`      | grammY bot: username auth, ensure-user, typing indicator, splitting.  |
-| `registry.ts`      | SQLite: Telegram user ↔ OpenClaw agent.                               |
-| `provisioner.ts`   | Create an isolated agent (CLI + template + tool policy + allowlist).  |
-| `router.ts`        | Per-message god choice (pin → keywords → LLM → previous → default) + session keys. |
-| `intent.ts`        | Keyword fast path of the router.                                      |
-| `classifier.ts`    | LLM fallback of the router (Groq, small model, one short completion). |
-| `openclaw.ts`      | Runs one agent turn via the OpenClaw CLI.                             |
-| `openclaw-cli.ts`  | Generic CLI runner for management commands.                           |
-| `notify.ts`        | Loopback endpoint: `{agentId,text}` → the owning user's chat.         |
-| `workspace-template/` | Persona files seeded into every new user workspace.               |
-| `bin/remind-impl/` | The real `remind*` helpers; take the agent id as their first argument. |
-| `bin/install-remind-wrappers` | Writes an agent's wrapper scripts (id baked in) into a directory. |
-| `container/`       | Tiny DI container wiring the modules together (`init-containers.ts`). |
-| `logger/`          | Structured JSON logging (metadata only, never secrets).           |
-| `tokens.ts`        | DI tokens.                                                        |
-| `types.ts`         | Shared types / the `OpenClawClient` interface.                    |
+Only the owner has a pantheon. A non-owner user would get one isolated `u_<id>`
+agent bound to their own chat (see [Adding a user](#adding-a-user)).
 
-## Requirements
+| Path | What it is |
+|---|---|
+| `gods/<id>/` | Persona templates for zeus, athena, heracles, aphrodite (`{{NAME}}`, `{{USERNAME}}`, `{{REMIND_BIN}}`, `{{CHAT_ID}}`). |
+| `workspace-template/` | Persona template for a non-owner user's own agent (Hermes-style). |
+| `bin/remind-impl/` | The real `remind*` helpers; they take the agent id as their first argument. |
+| `bin/install-remind-wrappers` | Writes an agent's wrapper scripts (agent id baked in). |
+| `bin/remind.test.sh` | Tests for the helpers: `bash bin/remind.test.sh` → `OK`. |
+| `.github/workflows/deploy.yml` | Deploys the helpers to the server on push to `main`. |
 
-- A Linux VPS that already runs **OpenClaw** (Pantheon runs on the *same* host).
-- **Docker** with the compose plugin for production (§7); **Bun** locally for development.
-- A Telegram bot token and the Telegram usernames of the people allowed to use it (below).
+## Setup
 
-Pantheon calls the OpenClaw CLI locally — there is no SSH, no HTTP between
-Pantheon and OpenClaw, and no database.
+Everything below runs on the OpenClaw host as the `openclaw` user, on OpenClaw
+2026.9.7 or later. The helpers also need `jq` and `column` (util-linux).
 
-## 1. Create the bot (BotFather)
+### 1. Bot token
 
-1. In Telegram, open [@BotFather](https://t.me/BotFather).
-2. Send `/newbot`, choose a name and a username ending in `bot`.
-3. Copy the **token** it gives you — this goes in `TELEGRAM_BOT_TOKEN`.
-
-## 2. Users
-
-Add Telegram usernames (without `@`) to `TELEGRAM_ALLOWED_USERNAMES`; the owner
-(`TELEGRAM_OWNER_USERNAME`) keeps the existing `main` agent. Everyone else gets
-`u_<telegram id>` on their first message. Users need a Telegram username set.
-Removing a username locks the user out on the next restart; delete their agent
-with `openclaw agents delete u_<id>` if you want the data gone.
-
-## 3. Install
+Keep the token out of shell history and readable only by `openclaw`:
 
 ```bash
-git clone <your-repo> /opt/pantheon
-cd /opt/pantheon
-bun install          # local development only; production builds the image (§7)
+(umask 077; read -rsp 'bot token: ' T && printf '%s' "$T" > ~/.openclaw/telegram-bot-token); echo
 ```
 
-## 4. Configure
+### 2. Channel and binding
+
+Only one process may poll a bot token. A second poller shows up as HTTP 409 in
+the gateway log.
 
 ```bash
-cp .env.example .env
-$EDITOR .env          # fill in the values below
-chmod 600 .env        # it holds the bot token and the notify secret
+openclaw config set channels.telegram '{"tokenFile":"/home/openclaw/.openclaw/telegram-bot-token","dmPolicy":"allowlist","allowFrom":["<OWNER_TG_ID>"],"groupPolicy":"allowlist"}' --strict-json
+openclaw config set bindings '[{"agentId":"zeus","match":{"channel":"telegram","peer":{"kind":"direct","id":"<OWNER_TG_ID>"}}}]' --strict-json --replace
+openclaw agents list --bindings     # zeus ← telegram direct <OWNER_TG_ID>
 ```
 
-| Variable                     | Required | Meaning                                                    |
-| ---------------------------- | :------: | ---------------------------------------------------------- |
-| `TELEGRAM_BOT_TOKEN`         |    ✅    | BotFather token (secret).                                  |
-| `TELEGRAM_ALLOWED_USERNAMES` |    ✅    | Comma-separated usernames allowed to use the bot.          |
-| `TELEGRAM_OWNER_USERNAME`    |    ✅    | Username mapped to agent `main`.                           |
-| `NOTIFY_SECRET`              |    ✅    | Shared secret for `POST /notify`.                          |
-| `OPENCLAW_BIN`, `OPENCLAW_STATE_DIR`, `OPENCLAW_TIMEOUT_SECONDS`, `PANTHEON_DATA_DIR`, `PANTHEON_BIN_DIR`, `REMIND_IMPL_DIR`, `LOG_LEVEL`, `NOTIFY_HOST`, `NOTIFY_PORT` | | See `.env.example`. |
+`allowFrom` takes numeric Telegram user ids, not usernames. Groups stay blocked.
+Per-chat bindings go through `config set bindings`; `openclaw agents bind` only
+binds whole channels.
 
-`.env` is git-ignored and never committed. It holds two secrets — the bot token
-and `NOTIFY_SECRET` — so keep it `chmod 600`. The OpenClaw CLI itself runs
-locally under the service user's own credentials.
-
-## 5. Development
+### 3. Agent-to-agent
 
 ```bash
-bun run dev        # watch mode
-bun run typecheck  # tsc --noEmit
-bun test           # unit tests
-bun run start      # run once (foreground)
+openclaw config set tools.agentToAgent '{"enabled":true,"allow":["zeus","main","athena","heracles","aphrodite"]}' --strict-json
 ```
 
-## 6. Reminder helpers
+Both sender and target must be in `allow`, so `u_*` agents can neither reach nor
+be reached by the owner's gods.
 
-Agents schedule reminders by exec'ing small wrapper scripts. Layout on the
-OpenClaw host:
+### 4. Voice notes
+
+```bash
+openclaw plugins install @openclaw/groq-provider
+(umask 077; read -rsp 'groq key: ' K && printf 'GROQ_API_KEY=%s\n' "$K" >> ~/.openclaw/.env); echo
+openclaw gateway restart            # the gateway reads ~/.openclaw/.env at start
+openclaw config set tools.media.models '[{"provider":"groq","model":"whisper-large-v3","capabilities":["audio"]}]' --strict-json
+```
+
+### 5. Tool policies
+
+Set at `agents.entries.<id>.tools`, e.g.
+`openclaw config set agents.entries.zeus.tools.deny '<json array>' --strict-json --replace`,
+then `openclaw config validate`. Tool and binding changes hot-reload.
+
+| Agent | Policy |
+|---|---|
+| `main` (Hermes) | No overrides. |
+| `zeus` | Deny `google-calendar__*`, `group:automation`, `sessions_history`, `sessions_search` (he must not read other gods' conversations). Exec allowlist, empty. |
+| `athena` | Deny `google-calendar__*`. Exec allowlist, empty. |
+| `heracles`, `aphrodite` | `fs.workspaceOnly`, elevated off, exec allowlist = their own `remind*` wrappers. Deny `google-calendar__*`, `group:web`, `group:nodes`, `group:ui`, `group:automation` and every `group:sessions` member except `sessions_send`: `sessions`, `sessions_list`, `sessions_history`, `sessions_search`, `conversations_list`, `conversations_send`, `conversations_turn`, `sessions_spawn`, `sessions_yield`, `subagents`, `session_status`, `suggest_task`, `dismiss_task`. |
+
+The `message` tool (`group:messaging`) is allowed for every god.
+
+## Hand-off protocol
+
+1. Every owner message reaches Zeus. He answers general matters himself.
+2. For a specialist's craft he calls `sessions_send {sessionKey: "agent:<god>:main", message: <the owner's words verbatim, plus "File: <path>" lines>, timeoutSeconds: 0}` and ends his turn with exactly `NO_REPLY`.
+3. The specialist sees `[Inter-session message] sourceSession=agent:zeus:main sourceTool=sessions_send isUser=false`, answers with `message {action: "send", channel: "telegram", target: "<OWNER_TG_ID>", message: …}` and ends with exactly `NO_REPLY`.
+4. Word between gods (formerly `tell`) is a one-hop `sessions_send` carrying a fact. The receiver files it, acknowledges to the owner in one line with `message`, and ends with `NO_REPLY`.
+
+Why the silent tokens matter: if a `sessions_send` target ends its turn with any
+other text, OpenClaw runs up to five "ping-pong" turns between the two agents
+(starting with the sender) plus an extra "announce" turn on the target.
+`NO_REPLY`, `REPLY_SKIP`, `ANNOUNCE_SKIP` and `HEARTBEAT_OK` end that exchange;
+Zeus answers any reply that bounces back to him with `REPLY_SKIP`. Pantheon's old
+`/tell` loop guard and rate cap no longer exist — the persona rules plus this cap
+replace them.
+
+## Reminders
+
+Gods schedule reminders by exec'ing small wrapper scripts:
 
 ```text
-/home/openclaw/bin/remind-impl/          # the real scripts (remind, remind-in, …)
-/home/openclaw/bin/remind*               # the owner's wrappers  -> agent main
-/home/openclaw/bin/agents/u_<id>/remind* # one user's wrappers   -> agent u_<id>
+/home/openclaw/bin/remind-impl/            # the real scripts (remind, remind-in, …) + owner-chat
+/home/openclaw/bin/remind*                 # the owner's wrappers  -> agent main (Hermes)
+/home/openclaw/bin/agents/<agent-id>/remind*  # one agent's wrappers (gods, u_<id> users)
 ```
 
 Each wrapper is two lines and pins the agent id:
 
 ```sh
 #!/bin/sh
-exec /home/openclaw/bin/remind-impl/remind-in u_42 "$@"
+exec /home/openclaw/bin/remind-impl/remind-in heracles "$@"
 ```
 
-**Why wrappers.** Agent attribution must not be derivable from anything the
-agent controls. The working directory is not trustworthy (OpenClaw's exec tool
-honours a caller-supplied `workdir`), and neither is the environment (agents may
-pass env overrides). The only unforgeable primitive is OpenClaw's **per-agent
-exec allowlist**: agent `u_42` is allowed to exec
-`/home/openclaw/bin/agents/u_42/remind*` and nothing else — not the
-implementations, not another user's wrapper directory. Because the wrapper
-hard-codes `u_42`, a user's agent can only ever schedule (and list, and cancel)
-reminders for itself. The implementations additionally set an explicit `PATH`,
-validate the agent id (`main` or `u_<digits>`), the job name
-(`[a-z0-9][a-z0-9-]{0,63}`) and the timestamp/cron expression before calling
-`openclaw`.
+**Why wrappers.** Attribution must not be derivable from anything the agent
+controls. The working directory is not trustworthy (OpenClaw's exec tool honours a
+caller-supplied `workdir`), and neither is the environment (agents may pass env
+overrides). The only unforgeable primitive is OpenClaw's **per-agent exec
+allowlist**: agent `heracles` may exec `/home/openclaw/bin/agents/heracles/remind*`
+and nothing else. Because the wrapper hard-codes the id, an agent can only
+schedule, list and cancel its own reminders. The implementations also set an
+explicit `PATH` and validate the agent id, the job name (`[a-z0-9][a-z0-9-]{0,63}`)
+and the timestamp or cron expression before calling `openclaw`.
 
-Deploy:
+| Command | Job |
+|---|---|
+| `remind <ISO-8601 timestamp> <name> <text>` | one-shot, deleted after a successful run |
+| `remind-in <duration> <name> <text>` | one-shot, relative (`date -d "+<duration>"`) |
+| `remind-cron "<5-field cron, UTC>" <name> <text>` | recurring |
+| `remind-list` / `remind-rm <name>` | this agent's jobs only (name prefix `<agent>--`) |
+
+Each job is `openclaw cron add --name=<agent>--<name> --agent=<agent> (--at|--cron)=…
+--command-argv='["/bin/cat"]' --command-input=<text> --announce --channel=telegram
+--to=<chat> [--delete-after-run]`: a command payload, so no model turn runs at fire
+time and the text is delivered verbatim. A failed delivery marks the run failed.
+
+The chat comes from the agent id: a `u_<digits>` agent delivers to `<digits>` (a
+private chat's id is the user's id); every other agent is one of the owner's gods
+and delivers to the numeric id in `/home/openclaw/bin/remind-impl/owner-chat`.
+Write that file once, by hand: `echo <OWNER_TG_ID> > ~/bin/remind-impl/owner-chat`.
+
+OpenClaw masks links and codes in a scheduled message on lines that read like
+login prompts ("visit/open <link>", "log in at …", "verification code …"); give a
+link on its own line without those words. Inspect jobs with `openclaw cron list`
+and `openclaw cron runs --id <id>`.
+
+## Adding a god
 
 ```bash
-# 1. implementations — the container entrypoint copies bin/remind-impl/ to
-#    /home/openclaw/bin/remind-impl on every start, so nothing to do here once
-#    the container runs. For a non-container install:
-#    sudo install -d -m755 /home/openclaw/bin/remind-impl
-#    sudo install -m755 bin/remind-impl/remind* /home/openclaw/bin/remind-impl/
-#    sudo install -m644 bin/remind-impl/remind-lib /home/openclaw/bin/remind-impl/remind-lib
-sudo install -m755 bin/install-remind-wrappers /home/openclaw/bin/
-
-# 2. the owner's wrappers, on the gateway PATH
-sudo -u openclaw /home/openclaw/bin/install-remind-wrappers main /home/openclaw/bin
-
-# 3. the owner's TOOLS.md (user workspaces get theirs from the provisioner)
-sed 's|{{REMIND_BIN}}|/home/openclaw/bin|g' workspace-template/TOOLS.md.tmpl \
-  | sudo -u openclaw tee /home/openclaw/.openclaw/workspace/TOOLS.md >/dev/null
+openclaw agents add <id> --workspace ~/.openclaw/workspace-<id> --non-interactive
+rm -f ~/.openclaw/workspace-<id>/BOOTSTRAP.md
 ```
 
-Pantheon installs each new user's wrappers itself (into
-`PANTHEON_BIN_DIR/agents/<agent-id>/`, byte-identical to what
-`install-remind-wrappers` writes) and adds the matching allowlist entry with
-`openclaw approvals allowlist add`.
+1. Copy `gods/<id>/*` into the workspace, rendering `{{NAME}}`, `{{USERNAME}}`,
+   `{{REMIND_BIN}}` (`/home/openclaw/bin/agents/<id>`) and `{{CHAT_ID}}` (the
+   owner's Telegram id). On 2026.9.7 `openclaw doctor` folds `TOOLS.md` into
+   `AGENTS.md` under `## Tools`; edit the live files in place from then on.
+2. Set its tool policy (above).
+3. `install-remind-wrappers <id> /home/openclaw/bin/agents/<id>` and
+   `openclaw approvals allowlist add --agent <id> "/home/openclaw/bin/agents/<id>/remind*"`.
+4. Add `<id>` to `tools.agentToAgent.allow`.
+5. Add the god to Zeus's roster (`gods/zeus/` and Zeus's live `AGENTS.md`), and to
+   the other gods' lists of kin.
 
-Requirements on the OpenClaw host:
+## Adding a user
 
-- `jq` and `column` (util-linux) must be installed — the helpers build the JSON
-  body with `jq` and `remind-list` formats with `column`.
-- `PANTHEON_NOTIFY_SECRET` must be set **in the OpenClaw gateway's
-  environment**, because the cron job's command reads it at fire time. Configure
-  it in `openclaw.json` under `env` and give it the same value as Pantheon's
-  `NOTIFY_SECRET`:
-
-  ```json5
-  { env: { PANTHEON_NOTIFY_SECRET: "<same value as NOTIFY_SECRET>" } }
-  ```
-
-  Without it the reminder POST is rejected with 401 and never reaches Telegram.
-
-## 7. Production (Docker Compose)
-
-Pantheon runs as a single Docker container on the same VPS as OpenClaw.
-OpenClaw itself is **not** containerized — its CLI and state directory are
-bind-mounted into the container at identical paths, so no `.env` values change.
-
-### Prerequisites
-
-- Docker Engine 24+ with the compose plugin (`docker compose version`), and the
-  deploy user in the `docker` group.
-- The `openclaw` user on the host has UID/GID 1000 (the image runs as 1000:1000
-  so bind-mounted paths are writable).
-- `/opt/pantheon/.env` populated (chmod 600, owned by `openclaw:openclaw`).
-  Set `PANTHEON_DATA_DIR=/opt/pantheon/data` explicitly — the default `./data`
-  would resolve to `/app/data` *inside* the container and be lost on recreate.
-- `/opt/pantheon/data/` exists and is writable by UID 1000 (holds `users.sqlite`).
-- `PANTHEON_NOTIFY_SECRET` set in the OpenClaw gateway env (see §6).
-
-### First-time cutover from systemd
-
-Only one Pantheon may poll the bot token at a time, so stop the unit first:
+There is no self-provisioning. You need the user's numeric Telegram id.
 
 ```bash
-systemctl --user stop pantheon
-systemctl --user disable pantheon
-rm ~/.config/systemd/user/pantheon.service
-systemctl --user daemon-reload
+ID=<telegram user id>; A=u_$ID
+openclaw agents add $A --workspace ~/.openclaw/workspace-$A --non-interactive
+rm -f ~/.openclaw/workspace-$A/BOOTSTRAP.md
 ```
 
-(`sudo systemctl …` / `/etc/systemd/system/` if you installed it as a system unit.)
+1. Copy `workspace-template/*.md` into the workspace and render
+   `workspace-template/*.md.tmpl` without the `.tmpl` suffix (`{{NAME}}`,
+   `{{USERNAME}}`, `{{REMIND_BIN}}` = `/home/openclaw/bin/agents/$A`).
+2. Tool policy:
+   ```bash
+   openclaw config set agents.entries.$A.tools '{"fs":{"workspaceOnly":true},"deny":["google-calendar__*","group:sessions","group:web","group:nodes","group:ui","group:automation"],"exec":{"mode":"allowlist"},"elevated":{"enabled":false}}' --strict-json --replace
+   ```
+3. `install-remind-wrappers $A /home/openclaw/bin/agents/$A` and
+   `openclaw approvals allowlist add --agent $A "/home/openclaw/bin/agents/$A/remind*"`.
+4. Append `{"agentId":"u_<ID>","match":{"channel":"telegram","peer":{"kind":"direct","id":"<ID>"}}}`
+   to `bindings` (`config get bindings` → edit → `config set bindings … --strict-json --replace`).
+5. Only then add `"<ID>"` to `channels.telegram.allowFrom`. An allowed user without
+   a binding would reach the default agent — Hermes, the owner's own.
 
-### Build and start
+## Deploy
+
+A push to `main` runs `.github/workflows/deploy.yml` over SSH as `openclaw`:
+`git reset --hard origin/main` in `/opt/pantheon`, `bash bin/remind.test.sh`,
+`docker rm -f pantheon` (the retired container must never poll again), then install
+`bin/remind-impl/*` and `bin/install-remind-wrappers` into `/home/openclaw/bin`.
+Files it does not ship (such as `owner-chat`) are left alone.
+
+Persona files are not deployed: the gods write to their own workspaces, so the
+live files are edited in place on the server, and `gods/` is kept in step by hand.
+
+## Operations
 
 ```bash
-cd /opt/pantheon
-git pull
-docker compose build
-docker compose up -d
+openclaw channels status --probe       # telegram connected, one poller
+openclaw agents list --bindings
+openclaw cron list                     # add --all for disabled jobs
+openclaw cron runs --id <job-id>       # delivery status per run
+journalctl --user -u openclaw-gateway -f
 ```
 
-### Verify
+## Known limits
 
-```bash
-docker compose ps                    # state should be "running"
-docker compose logs -f --tail 50     # structured JSON logs
-ss -tlnp | grep 8477                 # notify endpoint bound on 127.0.0.1
-ls -l /home/openclaw/bin/remind-impl # refreshed by the entrypoint on start
-```
+- Pantheon's chat history did not carry over; sessions are now `agent:<id>:main`.
+  Workspace memory files are unaffected.
+- `/hermes`, `/athena`, `/gods` and `/auto` are gone: just tell Zeus what you want.
+- A specialist's answer costs two model turns (Zeus + the god).
+- Uploaded files stay in OpenClaw's media store (`~/.openclaw/media/inbound/`);
+  Zeus passes their path. Gods with `fs.workspaceOnly` (Heracles, Aphrodite) cannot
+  read them.
+- OpenClaw does not echo a voice note's transcript back to the chat.
 
-Then send a message to the bot and ask it for a reminder in ~2 minutes — that
-exercises host cron → `/notify` → grammY end to end.
+## Rollback to the old bot
 
-### Update
-
-```bash
-cd /opt/pantheon && git pull && docker compose up -d --build
-```
-
-### Rollback
-
-```bash
-cd /opt/pantheon && git checkout <previous-sha> && docker compose up -d --build
-```
-
-### What the container sees
-
-| Host path | In container | Mode | Purpose |
-|---|---|---|---|
-| `/home/openclaw/.openclaw` | same | rw | OpenClaw CLI + agent workspaces (`OPENCLAW_BIN`, `OPENCLAW_STATE_DIR` unchanged). |
-| `/opt/pantheon/data` | same | rw | SQLite registry (`users.sqlite` + wal/shm). |
-| `/opt/pantheon/.env` | same | ro | Config; also loaded via `env_file`. |
-| `/home/openclaw/bin` | same | rw | `remind-impl/` (synced by the entrypoint on every start) and per-agent wrapper dirs. |
-
-`network_mode: host` keeps the `127.0.0.1:8477` loopback working for the
-OpenClaw cron → `/notify` POST. Logs go to the journal via the `journald`
-driver, tagged `pantheon`. `pantheon.service` is kept in-repo for reference
-only and is marked deprecated.
-
-
-## 8. Logs & troubleshooting
-
-Pantheon logs one JSON object per line to the journal:
-
-```bash
-docker compose logs -f --tail 100      # simplest: container stdout
-sudo journalctl -t pantheon -f         # same lines via the journald driver (entries are
-                                       # root-owned; add yourself to systemd-journal to drop sudo)
-```
-
-Key events: `bot started`, `rejected unauthorized message`, `provisioning agent`,
-`provisioned agent`, `openclaw request started`, `openclaw response completed`,
-`openclaw request failed`, `notify delivered`, `notify rejected`. Logs contain metadata
-only (user id, agent, duration, error type) — never message bodies or secrets.
-
-| Symptom                              | Likely cause / fix                                        |
-| ------------------------------------ | --------------------------------------------------------- |
-| Exits immediately with a config error| A required env var is missing/invalid — the message says which. |
-| Bot ignores you                      | Check `rejected` log; username may not be in `TELEGRAM_ALLOWED_USERNAMES`. |
-| Every reply is the generic error     | Run the OpenClaw command by hand (below) and check stderr in the log. |
-| `Could not find reply text …`        | OpenClaw's JSON shape differs — see next section.         |
-
-## How the OpenClaw integration works
-
-`src/openclaw.ts` is the single adapter. For each turn it runs, via
-`Bun.spawn()` with an **argument array** (never a shell string, so Telegram text
-can't inject flags or commands):
-
-```bash
-openclaw agent \
-  --agent <agent-id> \
-  --session-key telegram:<user-id>:<chat-id> \
-  --message <your text> \
-  --timeout <seconds> \
-  --json
-```
-
-- **Sessions / memory:** the `--session-key` (`telegram:<user>:<chat>`) groups a
-  conversation. OpenClaw owns the actual memory behind that key, so Pantheon
-  stores no history and needs no database. OpenClaw isolates sessions per agent
-  when `--agent` is given, so one key works across agents.
-- **Agent mapping:** each Telegram user is mapped to an OpenClaw agent in the
-  SQLite registry. The owner gets agent `main`; other users get `u_<id>`. A user
-  is provisioned the first time they message the bot.
-- **Response parsing** lives in one function, `extractResponseText()`, because
-  the exact `--json` shape has **not yet been verified against a live
-  OpenClaw**. It tries the common field names and fails loudly (logging the
-  observed keys) if none match.
-
-### Verify the JSON shape on the VPS (one-time)
-
-This dev environment has no OpenClaw, so run this once on the VPS and check the
-output:
-
-```bash
-openclaw agent --agent main --session-key pantheon-test \
-  --message "Reply with exactly: PANTHEON_OK" --json
-```
-
-If the reply text isn't found automatically, note which key holds it and adjust
-the field list in `extractResponseText()` (`src/openclaw.ts`). That is the only
-place response-shape assumptions live.
-
-[OpenClaw]: #
+Backups of the cutover are in `~/pantheon-migration-backup-20261006-104233`
+(`openclaw.json`, `~/bin`, persona files, cron and approvals JSON). Restore
+`openclaw.json` (removes `channels.telegram`) and `openclaw gateway restart`;
+restore `~/bin` and the persona files; then
+`cd /opt/pantheon && git checkout pantheon-last-container && docker compose up -d --build`.
+The two weekly reminders would need their old `/notify` payload back (see
+`cron.json` in the backup).
 
 ## Gods
 
-Pantheon can host more than one god behind the single bot. For the owner every
-message is routed to the god it is for:
+### Zeus — the door
 
-1. a **pinned** god (`/hermes`, `/athena`, `/heracles`, `/aphrodite`, `/zeus`) always wins, until `/auto`;
-2. otherwise a keyword pass (`intent.ts`) decides when the signal is clear
-   ("remind me…" → Hermes, "vacancies…" → Athena);
-3. otherwise a small fast model (`classifier.ts`, Groq `PANTHEON_CLASSIFIER_MODEL`)
-   picks a god, knowing who answered the previous message so follow-ups stay put;
-4. otherwise the previous god, else the default (`PANTHEON_ROUTER`, e.g. Zeus —
-   or Hermes when no router god is configured).
+`gods/zeus/` answers general questions himself (web search via keyless
+endpoints) and hands every specialist matter to the right god.
 
-Routing is never persisted: only `/<god>` pins a chat.
+### Athena — the vacancy hunt
 
-- `/gods` — list the gods you may summon (the active one is marked ▸).
-- `/hermes [message]`, `/athena [message]`, `/heracles [message]`,
-  `/aphrodite [message]`, `/zeus [message]` — pin the chat to a god (and
-  optionally speak to it in the same message).
-- `/auto` — unpin; route each message again.
-- Send a **file** (e.g. your résumé) and it lands in the active god's workspace
-  `inbox/`, then that god is told about it.
-
-Non-owner users are unaffected: they have exactly one god (their own agent) and
-see no god commands.
-
-### Adding a god
-
-1. Create the agent and its workspace:
-   ```bash
-   openclaw agents add <id> --workspace ~/.openclaw/workspace-<id> --non-interactive
-   rm -f ~/.openclaw/workspace-<id>/BOOTSTRAP.md
-   ```
-2. Install its persona from `gods/<id>/` into that workspace (render `{{NAME}}` /
-   `{{USERNAME}}` in `USER.md`).
-3. Grant it the tools it needs and deny what it must not touch, e.g. for a
-   web-using god keep Hermes's calendar to Hermes:
-   ```bash
-   openclaw config set 'agents.list[<n>].tools' '{deny:["google-calendar__*"]}'
-   ```
-4. Add its id to `PANTHEON_OWNER_GODS` and restart Pantheon.
-
-### Athena — the vacancy hunt (Phase 1)
-
-`gods/athena/` is the job-hunt god. She is **web-enabled** (fetches job-board
-JSON APIs — Greenhouse/Lever/Ashby boards, Remotive, RemoteOK, We Work Remotely,
-HN "Who's Hiring") and configured entirely by conversation: tell her what you're
-hunting and send your résumé, and she records it in her own workspace. Phase 1
-is **on-demand** — she finds and ranks real roles and weaves a tailored résumé +
-cover letter on request. Proactive scheduled updates and any auto-apply are
-later phases (auto-submission is deliberately not built here).
+`gods/athena/` is the job-hunt god. She is web-enabled (Greenhouse/Lever/Ashby
+boards, Remotive, RemoteOK, We Work Remotely, HN "Who's Hiring") and configured
+entirely by conversation: tell her what you're hunting and send your résumé; she
+records its path and finds, ranks and tailors on request. Auto-submission is
+deliberately not built.
 
 ### Heracles — goals & habits
 
-`gods/heracles/` is the goals-and-habits god. Declare a goal and he breaks it
-into 3–7 **labors** (concrete milestones), keeps the ledger in his `MEMORY.md`,
-and holds you to the work — honest about stalled progress, motivating from your
-own recorded history. With your consent he schedules **check-ins** over the
-same wire Hermes uses (`remind-cron` → `/notify` → your chat); your ordinary
-reminders stay Hermes's charge. He is not web-enabled and holds no calendar —
-his `TOOLS.md` contains a `{{REMIND_BIN}}` placeholder, so render it at install
-time (like the workspace template) to wherever his remind wrappers live.
+`gods/heracles/` breaks a declared goal into 3–7 labors, keeps the ledger in his
+`MEMORY.md`, and holds you to the work. With your consent he schedules check-ins
+through the reminder helpers. He is not web-enabled and holds no calendar.
 
 ### Aphrodite — matters of the heart
 
-`gods/aphrodite/` is the relationships god. She keeps a private ledger of the
-people who matter (tastes, sizes, wishes mentioned in passing, sore subjects),
-turns it into gift ideas and drafted messages — love notes, apologies, hard
-conversations — and counsels through conflict. She **never contacts anyone**:
-she drafts, you send. With consent she schedules preparation and stay-in-touch
-nudges over the reminder wire; the reminders of dates themselves stay Hermes's.
-Not web-enabled, no calendar; her `TOOLS.md` has the same `{{REMIND_BIN}}`
-placeholder to render at install time. Her ledger is the most sensitive data in
-the pantheon — her policy is workspace-only fs, exec-allowlist only.
+`gods/aphrodite/` keeps a private ledger of the people who matter, turns it into
+gift ideas and drafted messages, and counsels through conflict. She never
+contacts anyone: she drafts, you send. With consent she schedules preparation and
+stay-in-touch nudges. Her ledger is the most sensitive data in the pantheon —
+workspace-only fs, exec allowlist only.
 
-### Word between gods (`tell`)
-
-Gods are isolated agents and OpenClaw offers no cross-agent messaging, so
-Pantheon carries the word: each owner god has an allowlisted `tell` wrapper
-(sender id baked in) that POSTs to the loopback `/tell` endpoint. Pantheon
-validates both ids against the owner's pantheon (`u_<id>` agents are never
-reachable), runs one turn on the target god in the owner's session with it,
-and always relays the target's one-line acknowledgment to the owner's chat —
-so "Hermes, set Amina's birthday Sept 7 and tell Aphrodite" ends with both an
-inscription and a 🌹 acknowledgment. Push-only (a fact, never a question, never
-another god's ledger), one hop by construction (while a god's tell-turn runs,
-tells *from* it are refused), rate-capped, and a failed delivery is a non-zero
-exit the sender must report honestly.
-
-### Voice notes
-
-Send a voice message and Pantheon transcribes it (Groq Whisper), echoes what it
-heard, then routes the transcript through the pantheon exactly like a typed
-message. Set `GROQ_API_KEY` (a free key from console.groq.com) to enable it;
-without it, voice notes get a polite "not set up" reply. `GROQ_MODEL` defaults to
-`whisper-large-v3`.
-
+[OpenClaw]: https://docs.openclaw.ai
