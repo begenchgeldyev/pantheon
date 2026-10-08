@@ -4,7 +4,8 @@ Pantheon is the owner's household of [OpenClaw] agents — the "gods" — reache
 through Telegram. OpenClaw's own Telegram channel now carries every message; this
 repository holds what OpenClaw does not ship: the gods' persona templates
 (`gods/`), the template for a non-owner user's own agent (`workspace-template/`),
-and the reminder helpers (`bin/`).
+the reminder helpers and the morning-standup intake (`bin/`), and the laptop half
+of the standup (`laptop/`).
 
 ## History
 
@@ -27,6 +28,9 @@ Telegram ◄── message tool ── specialist (agent:main:main = Hermes, age
 
 Reminders: god ──exec its own wrapper──► bin/remind-impl ──► openclaw cron add
            (command job: /bin/cat <text>) ──► OpenClaw announces stdout ──► Telegram
+
+Standup:   laptop timer ── laptop/seneca-standup (collect.sh → claude -p) ──ssh──► bin/standup-intake
+           ──► standups/<date>.md + openclaw agent --agent seneca --deliver ──► Telegram
 ```
 
 Only the owner has a pantheon. A non-owner user would get one isolated `u_<id>`
@@ -34,11 +38,14 @@ agent bound to their own chat (see [Adding a user](#adding-a-user)).
 
 | Path | What it is |
 |---|---|
-| `gods/<id>/` | Persona templates for zeus, athena, heracles, aphrodite (`{{NAME}}`, `{{USERNAME}}`, `{{REMIND_BIN}}`, `{{CHAT_ID}}`). |
+| `gods/<id>/` | Persona templates for zeus, athena, heracles, aphrodite, seneca (`{{NAME}}`, `{{USERNAME}}`, `{{REMIND_BIN}}`, `{{CHAT_ID}}`). |
 | `workspace-template/` | Persona template for a non-owner user's own agent (Hermes-style). |
 | `bin/remind-impl/` | The real `remind*` helpers; they take the agent id as their first argument. |
 | `bin/install-remind-wrappers` | Writes an agent's wrapper scripts (agent id baked in). |
 | `bin/remind.test.sh` | Tests for the helpers: `bash bin/remind.test.sh` → `OK`. |
+| `bin/standup-intake` | Receives the morning standup from the laptop and has Seneca deliver it. |
+| `bin/standup-intake.test.sh` | Its tests: `bash bin/standup-intake.test.sh` → `OK`. |
+| `laptop/` | The laptop half of the standup: `seneca-standup`, its systemd user units, its tests. |
 | `.github/workflows/deploy.yml` | Deploys the helpers to the server on push to `main`. |
 
 ## Setup
@@ -72,7 +79,7 @@ binds whole channels.
 ### 3. Agent-to-agent
 
 ```bash
-openclaw config set tools.agentToAgent '{"enabled":true,"allow":["zeus","main","athena","heracles","aphrodite"]}' --strict-json
+openclaw config set tools.agentToAgent '{"enabled":true,"allow":["zeus","main","athena","heracles","aphrodite","seneca"]}' --strict-json
 ```
 
 Both sender and target must be in `allow`, so `u_*` agents can neither reach nor
@@ -98,7 +105,7 @@ then `openclaw config validate`. Tool and binding changes hot-reload.
 | `main` (Hermes) | No overrides. |
 | `zeus` | Deny `google-calendar__*`, `group:automation`, `sessions_history`, `sessions_search` (he must not read other gods' conversations). Exec allowlist, empty. |
 | `athena` | Deny `google-calendar__*`. Exec allowlist, empty. |
-| `heracles`, `aphrodite` | `fs.workspaceOnly`, elevated off, exec allowlist = their own `remind*` wrappers. Deny `google-calendar__*`, `group:web`, `group:nodes`, `group:ui`, `group:automation` and every `group:sessions` member except `sessions_send`: `sessions`, `sessions_list`, `sessions_history`, `sessions_search`, `conversations_list`, `conversations_send`, `conversations_turn`, `sessions_spawn`, `sessions_yield`, `subagents`, `session_status`, `suggest_task`, `dismiss_task`. |
+| `heracles`, `aphrodite`, `seneca` | `fs.workspaceOnly`, elevated off, exec allowlist = their own `remind*` wrappers. Deny `google-calendar__*`, `group:web`, `group:nodes`, `group:ui`, `group:automation` and every `group:sessions` member except `sessions_send`: `sessions`, `sessions_list`, `sessions_history`, `sessions_search`, `conversations_list`, `conversations_send`, `conversations_turn`, `sessions_spawn`, `sessions_yield`, `subagents`, `session_status`, `suggest_task`, `dismiss_task`. |
 
 The `message` tool (`group:messaging`) is allowed for every god.
 
@@ -166,6 +173,42 @@ login prompts ("visit/open <link>", "log in at …", "verification code …"); g
 link on its own line without those words. Inspect jobs with `openclaw cron list`
 and `openclaw cron runs --id <id>`.
 
+## Morning standup
+
+Seneca's morning letter starts on the owner's laptop, where the repositories are.
+On weekdays at 09:30 (Asia/Novosibirsk) `seneca-standup.timer` runs
+`laptop/seneca-standup`: the `daily-standup` skill's `collect.sh` (one day; three
+on Mondays, back to Friday), then `claude -p --tools ""` with the skill's
+`SKILL.md` as its rules — what `/daily-standup` does, headless. The summary goes
+to the server over ssh:
+
+```bash
+ssh kz-openclaw /home/openclaw/bin/standup-intake <YYYY-MM-DD> < summary.md
+```
+
+`standup-intake` validates the date and the input (non-empty, at most 64 KiB),
+stores `~/.openclaw/workspace-seneca/standups/<date>.md`, then runs one
+`openclaw agent --agent seneca --deliver --reply-channel telegram --reply-to <owner chat>`
+turn: Seneca's reply — the letter — goes to the owner. Exit codes: `0`
+delivered, `2` bad input, `4` no workspace, `5` no owner chat, `6`
+`openclaw agent` failed (the file is kept).
+
+A failed step on the laptop raises a desktop notification that names it; the
+details are in `journalctl --user -u seneca-standup`. `ssh` is retried only on its
+own connection failure, so a laptop waking from sleep survives a late network.
+
+Install on the laptop, once:
+
+```bash
+ln -sf ~/projects/pantheon/laptop/seneca-standup ~/.local/bin/seneca-standup
+install -m 644 laptop/seneca-standup.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now seneca-standup.timer
+systemctl --user list-timers seneca-standup.timer    # next weekday 09:30
+systemctl --user start seneca-standup.service        # send one now
+```
+
+Tests: `bash laptop/seneca-standup.test.sh` → `OK` (stubs only, run on the laptop).
+
 ## Adding a god
 
 ```bash
@@ -211,9 +254,10 @@ rm -f ~/.openclaw/workspace-$A/BOOTSTRAP.md
 ## Deploy
 
 A push to `main` runs `.github/workflows/deploy.yml` over SSH as `openclaw`:
-`git reset --hard origin/main` in `/opt/pantheon`, `bash bin/remind.test.sh`,
-`docker rm -f pantheon` (the retired container must never poll again), then install
-`bin/remind-impl/*` and `bin/install-remind-wrappers` into `/home/openclaw/bin`.
+`git reset --hard origin/main` in `/opt/pantheon`, `bash bin/remind.test.sh` and
+`bash bin/standup-intake.test.sh`, `docker rm -f pantheon` (the retired container
+must never poll again), then install `bin/remind-impl/*`,
+`bin/install-remind-wrappers` and `bin/standup-intake` into `/home/openclaw/bin`.
 Files it does not ship (such as `owner-chat`) are left alone.
 
 Persona files are not deployed: the gods write to their own workspaces, so the
@@ -278,5 +322,14 @@ gift ideas and drafted messages, and counsels through conflict. She never
 contacts anyone: she drafts, you send. With consent she schedules preparation and
 stay-in-touch nudges. Her ledger is the most sensitive data in the pantheon —
 workspace-only fs, exec allowlist only.
+
+### Seneca — the counsel for work
+
+`gods/seneca/` is no god: the one mortal at the court, a Stoic who keeps the
+owner's work at Synecta. Every weekday morning he turns the laptop's standup into
+a short letter — the summary verbatim — and he answers questions about the work
+from his `standups/` record. On request he keeps work reminders through his own
+wrappers. No web, no GitLab, no Jira: he knows what the laptop sends and what he
+is told. See [Morning standup](#morning-standup).
 
 [OpenClaw]: https://docs.openclaw.ai
