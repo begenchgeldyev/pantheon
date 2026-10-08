@@ -51,7 +51,7 @@ mv -f "$NEW" "$WORKSPACE/standups/$DATE.md"
 
 {
   printf '[standup %s]\n' "$DATE"
-  printf 'The morning summary from the laptop, saved as standups/%s.md. Write the morning letter (AGENTS.md) and reply with it; your reply is delivered to the mortal.\n' "$DATE"
+  printf 'The morning summary from the laptop, already saved by the intake as standups/%s.md — do not write or change that file. Write the morning letter (AGENTS.md) and reply with it; your reply is delivered to the mortal.\n' "$DATE"
   printf '<<<SUMMARY\n'
   cat "$TMP/summary"
   [ -z "$(tail -c 1 "$TMP/summary")" ] || printf '\n'
