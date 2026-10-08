@@ -18,9 +18,11 @@ SSH_RETRIES="${SENECA_SSH_RETRIES:-3}"
 SSH_BACKOFF="${SENECA_SSH_BACKOFF:-20}"
 DATE="${SENECA_DATE:-$(date +%F)}"
 
-fail() { # $1 the step that failed, $2 what went wrong
-  echo "seneca-standup: $1 failed: $2" >&2
-  "$NOTIFY" -a Seneca -u critical "Сенека: стендап не отправлен — $1" "$2" || true
+fail() { # $1 the step that failed, $2 the full detail
+  echo "seneca-standup: $1 failed:" >&2
+  printf '%s\n' "$2" >&2
+  "$NOTIFY" -a Seneca -u critical "Сенека: стендап не отправлен — $1" \
+    "$(printf '%s\n' "$2" | tail -n 3)" || true
   exit 1
 }
 
@@ -37,9 +39,13 @@ fi
 WORK="$(mktemp -d)" || fail tmp "mktemp failed"
 trap 'rm -rf "$WORK"' EXIT
 
-"$COLLECT" "$WINDOW" > "$WORK/collected" 2> "$WORK/collect.err" \
-  || fail collect "rc=$?: $(tail -n 3 "$WORK/collect.err")"
-[ -r "$SKILL" ] || fail skill "cannot read $SKILL"
+rc=0
+"$COLLECT" "$WINDOW" > "$WORK/collected" 2> "$WORK/collect.err" || rc=$?
+[ "$rc" -eq 0 ] || fail collect "rc=$rc; $(cat "$WORK/collect.err")"
+
+rc=0
+cat "$SKILL" > "$WORK/skill.body" 2> "$WORK/skill.err" || rc=$?
+[ "$rc" -eq 0 ] || fail skill "rc=$rc; $(cat "$WORK/skill.err")"
 
 {
   cat <<EOF
@@ -50,29 +56,32 @@ Output only the summary itself: no preamble, no questions, no offers to widen th
 
 ===== daily-standup SKILL.md =====
 EOF
-  cat "$SKILL"
+  cat "$WORK/skill.body"
   printf '\n===== collect.sh output =====\n'
   cat "$WORK/collected"
-} > "$WORK/prompt"
+} > "$WORK/prompt" || fail prompt "cannot write the prompt"
 
+rc=0
 "$CLAUDE" -p --tools "" --strict-mcp-config --no-session-persistence \
-  < "$WORK/prompt" > "$WORK/summary" 2> "$WORK/claude.err" \
-  || fail claude "rc=$?: $(tail -n 3 "$WORK/claude.err")"
+  < "$WORK/prompt" > "$WORK/summary" 2> "$WORK/claude.err" || rc=$?
+[ "$rc" -eq 0 ] || fail claude "rc=$rc; $(cat "$WORK/claude.err")"
 grep -q '[^[:space:]]' "$WORK/summary" || fail summary "claude returned an empty summary"
 
 attempt=1
+: > "$WORK/ssh.all.err"
 while :; do
   rc=0
   "$SSH" -o BatchMode=yes -o ConnectTimeout=20 "$HOST" "$INTAKE" "$DATE" \
-    < "$WORK/summary" > "$WORK/intake.out" 2> "$WORK/intake.err" || rc=$?
+    < "$WORK/summary" > "$WORK/intake.out" 2> "$WORK/ssh.err" || rc=$?
   [ "$rc" -eq 0 ] && break
+  { echo "attempt $attempt rc=$rc"; cat "$WORK/ssh.err"; } >> "$WORK/ssh.all.err"
   if [ "$rc" -eq 255 ]; then
-    [ "$attempt" -lt "$SSH_RETRIES" ] || fail ssh "$(tail -n 3 "$WORK/intake.err")"
+    [ "$attempt" -lt "$SSH_RETRIES" ] || fail ssh "$(cat "$WORK/ssh.all.err")"
     attempt=$((attempt + 1))
     sleep "$SSH_BACKOFF"
     continue
   fi
-  fail intake "rc=$rc: $(tail -n 3 "$WORK/intake.err")"
+  fail intake "rc=$rc; $(cat "$WORK/ssh.all.err")"
 done
 cat "$WORK/intake.out"
 echo "seneca-standup: delivered $DATE (window $WINDOW)"

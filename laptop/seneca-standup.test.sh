@@ -12,6 +12,7 @@ mkdir -p "$T/bin"
 cat > "$T/bin/collect" <<STUB
 #!/bin/bash
 printf '%s\n' "\$@" > "$T/collect.args"
+[ -f "$T/collect.stderr" ] && cat "$T/collect.stderr" >&2
 echo "COLLECTED-DATA"
 exit \$(cat "$T/collect.rc" 2>/dev/null || echo 0)
 STUB
@@ -43,7 +44,7 @@ export SENECA_COLLECT="$T/bin/collect" SENECA_SKILL="$T/SKILL.md" SENECA_CLAUDE=
   SENECA_INTAKE=/srv/intake SENECA_SSH_RETRIES=3 SENECA_SSH_BACKOFF=0
 
 reset() {
-  rm -f "$T"/*.args "$T"/*.rc "$T/ssh.calls" "$T/ssh.rcs" "$T/ssh.stdin" "$T/claude.stdin"
+  rm -f "$T"/*.args "$T"/*.rc "$T/collect.stderr" "$T/ssh.calls" "$T/ssh.rcs" "$T/ssh.stdin" "$T/claude.stdin"
   printf '**За последние 24 часа**\n- **rz-web-client** — работа\n' > "$T/summary.txt"
 }
 run() { # $1 the date the job runs for
@@ -93,9 +94,23 @@ fails_at collect
 [ ! -e "$T/claude.args" ] || fail "collect: claude ran"
 [ ! -e "$T/ssh.calls" ] || fail "collect: ssh ran"
 
+# the full failing stderr reaches the journal — the root cause is not lost
+reset
+printf 'root cause: no such ref\nctx a\nctx b\nctx c\nctx d\n' > "$T/collect.stderr"
+echo 1 > "$T/collect.rc"
+run 2026-10-08
+fails_at collect
+grep -q 'root cause: no such ref' "$T/err" || fail "collect stderr root cause lost: $(cat "$T/err")"
+
 reset; export SENECA_SKILL="$T/missing.md"; run 2026-10-08; export SENECA_SKILL="$T/SKILL.md"
 fails_at skill
 [ ! -e "$T/claude.args" ] || fail "skill: claude ran"
+
+# a readable path that `cat` cannot actually read (a directory) must stop delivery
+reset; export SENECA_SKILL="$T"; run 2026-10-08; export SENECA_SKILL="$T/SKILL.md"
+fails_at skill
+[ ! -e "$T/claude.args" ] || fail "skill-dir: claude ran"
+[ ! -e "$T/ssh.calls" ] || fail "skill-dir: ssh ran"
 
 reset; echo 1 > "$T/claude.rc"; run 2026-10-08
 fails_at claude
