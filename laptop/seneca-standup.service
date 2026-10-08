@@ -1,0 +1,6 @@
+[Unit]
+Description=Seneca: send the morning standup to the server
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/seneca-standup

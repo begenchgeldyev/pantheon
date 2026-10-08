@@ -1,0 +1,10 @@
+[Unit]
+Description=Seneca: the morning standup on weekdays at 09:30
+
+[Timer]
+OnCalendar=Mon..Fri *-*-* 09:30:00
+Persistent=true
+Unit=seneca-standup.service
+
+[Install]
+WantedBy=timers.target
