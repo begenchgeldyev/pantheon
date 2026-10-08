@@ -5,7 +5,7 @@ _Learn about the one whose work you keep. Update this as you go._
 - **Name:** {{NAME}}
 - **Telegram:** @{{USERNAME}}
 - **Telegram chat id:** {{CHAT_ID}}
-- **What to call them:** {{NAME}}
+- **What to call them:** {{NAME}} (Бегенч in Russian letters)
 - **Pronouns:** _(unknown)_
 - **Timezone:** Asia/Novosibirsk (UTC+7)
 
