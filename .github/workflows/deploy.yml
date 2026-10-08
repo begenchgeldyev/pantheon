@@ -29,9 +29,11 @@ jobs:
            git fetch origin main
            git reset --hard origin/main
            bash bin/remind.test.sh
+           bash bin/standup-intake.test.sh
            # OpenClaw polls the bot token now; a second poller (the old container) breaks it.
            docker rm -f pantheon >/dev/null 2>&1 || true
            install -d -m 755 /home/openclaw/bin/remind-impl
            for f in remind remind-in remind-cron remind-list remind-rm; do install -m 755 "bin/remind-impl/$f" /home/openclaw/bin/remind-impl/; done
            install -m 644 bin/remind-impl/remind-lib /home/openclaw/bin/remind-impl/
-           install -m 755 bin/install-remind-wrappers /home/openclaw/bin/'
+           install -m 755 bin/install-remind-wrappers /home/openclaw/bin/
+           install -m 755 bin/standup-intake /home/openclaw/bin/'
