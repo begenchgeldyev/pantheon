@@ -1,0 +1,70 @@
+#!/bin/bash
+# Receive the owner's morning standup from the laptop and have Seneca deliver it.
+#
+# Usage: standup-intake <YYYY-MM-DD>   (the finished summary on stdin)
+#
+# The laptop job (laptop/seneca-standup) runs this over ssh. The summary is
+# stored in Seneca's workspace as standups/<date>.md, then one turn of
+# agent:seneca:main writes the morning letter and OpenClaw delivers that reply
+# to the owner's Telegram chat.
+set -euo pipefail
+
+. "$(dirname "$(readlink -f "$0")")/remind-impl/remind-lib"
+
+WORKSPACE=/home/openclaw/.openclaw/workspace-seneca
+MAX_BYTES=65536
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: standup-intake <YYYY-MM-DD> < summary" >&2
+  exit 2
+fi
+DATE="$1"
+if [[ ! "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || [ "$(date -d "$DATE" +%F 2>/dev/null)" != "$DATE" ]; then
+  echo "standup-intake: not a calendar date: $DATE" >&2
+  exit 2
+fi
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+head -c $((MAX_BYTES + 1)) > "$TMP/summary"
+if [ "$(wc -c < "$TMP/summary")" -gt "$MAX_BYTES" ]; then
+  echo "standup-intake: the summary is over $MAX_BYTES bytes" >&2
+  exit 2
+fi
+if ! grep -q '[^[:space:]]' "$TMP/summary"; then
+  echo "standup-intake: the summary is empty" >&2
+  exit 2
+fi
+
+if [ ! -d "$WORKSPACE" ]; then
+  echo "standup-intake: no Seneca workspace at $WORKSPACE" >&2
+  exit 4
+fi
+CHAT="$(pantheon_chat_for_agent seneca)"
+
+mkdir -p "$WORKSPACE/standups"
+NEW="$(mktemp "$WORKSPACE/standups/.$DATE.XXXXXX")"
+trap 'rm -rf "$TMP"; rm -f "$NEW"' EXIT
+cat "$TMP/summary" > "$NEW"
+chmod 644 "$NEW"
+mv -f "$NEW" "$WORKSPACE/standups/$DATE.md"
+
+{
+  printf '[standup %s]\n' "$DATE"
+  printf 'The morning summary from the laptop, saved as standups/%s.md. Write the morning letter (AGENTS.md) and reply with it; your reply is delivered to the mortal.\n' "$DATE"
+  printf '<<<SUMMARY\n'
+  cat "$TMP/summary"
+  [ -z "$(tail -c 1 "$TMP/summary")" ] || printf '\n'
+  printf 'SUMMARY>>>\n'
+} > "$TMP/message"
+
+rc=0
+openclaw agent --agent seneca --message-file "$TMP/message" --deliver \
+  --reply-channel telegram --reply-to "$CHAT" --timeout 300 --json \
+  > "$TMP/result" 2> "$TMP/error" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "standup-intake: openclaw agent failed (rc=$rc); the summary stays in standups/$DATE.md" >&2
+  cat "$TMP/error" "$TMP/result" >&2
+  exit 6
+fi
+echo "delivered $DATE"
