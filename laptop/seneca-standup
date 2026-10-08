@@ -1,0 +1,78 @@
+#!/bin/bash
+# The laptop half of Seneca's morning standup.
+#
+# Runs what /daily-standup runs — collect.sh, then claude with the skill's own
+# rules — headless, and hands the finished summary to the server's
+# standup-intake over ssh. seneca-standup.timer starts it on weekdays at 09:30.
+# Every SENECA_* variable below may be overridden from the environment.
+set -uo pipefail
+
+COLLECT="${SENECA_COLLECT:-$HOME/.claude/skills/daily-standup/scripts/collect.sh}"
+SKILL="${SENECA_SKILL:-$HOME/.claude/skills/daily-standup/SKILL.md}"
+HOST="${SENECA_HOST:-kz-openclaw}"
+INTAKE="${SENECA_INTAKE:-/home/openclaw/bin/standup-intake}"
+CLAUDE="${SENECA_CLAUDE:-claude}"
+NOTIFY="${SENECA_NOTIFY:-notify-send}"
+SSH="${SENECA_SSH:-ssh}"
+SSH_RETRIES="${SENECA_SSH_RETRIES:-3}"
+SSH_BACKOFF="${SENECA_SSH_BACKOFF:-20}"
+DATE="${SENECA_DATE:-$(date +%F)}"
+
+fail() { # $1 the step that failed, $2 what went wrong
+  echo "seneca-standup: $1 failed: $2" >&2
+  "$NOTIFY" -a Seneca -u critical "Сенека: стендап не отправлен — $1" "$2" || true
+  exit 1
+}
+
+[[ "$DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] && DOW="$(date -d "$DATE" +%u 2>/dev/null)" \
+  || fail date "not a date: $DATE"
+if [ "$DOW" = 1 ]; then
+  WINDOW=3d
+  HEADING="За 3 дня"
+else
+  WINDOW=1d
+  HEADING="За последние 24 часа"
+fi
+
+WORK="$(mktemp -d)" || fail tmp "mktemp failed"
+trap 'rm -rf "$WORK"' EXIT
+
+"$COLLECT" "$WINDOW" > "$WORK/collected" 2> "$WORK/collect.err" \
+  || fail collect "rc=$?: $(tail -n 3 "$WORK/collect.err")"
+[ -r "$SKILL" ] || fail skill "cannot read $SKILL"
+
+{
+  cat <<EOF
+You are running unattended as a scheduled job; nobody will read questions or answer them.
+collect.sh has already run for the window $WINDOW and its output is below — do not run anything.
+Write the standup summary strictly by the rules of the daily-standup skill that follows, under the heading «$HEADING».
+Output only the summary itself: no preamble, no questions, no offers to widen the window.
+
+===== daily-standup SKILL.md =====
+EOF
+  cat "$SKILL"
+  printf '\n===== collect.sh output =====\n'
+  cat "$WORK/collected"
+} > "$WORK/prompt"
+
+"$CLAUDE" -p --tools "" --strict-mcp-config --no-session-persistence \
+  < "$WORK/prompt" > "$WORK/summary" 2> "$WORK/claude.err" \
+  || fail claude "rc=$?: $(tail -n 3 "$WORK/claude.err")"
+grep -q '[^[:space:]]' "$WORK/summary" || fail summary "claude returned an empty summary"
+
+attempt=1
+while :; do
+  rc=0
+  "$SSH" -o BatchMode=yes -o ConnectTimeout=20 "$HOST" "$INTAKE" "$DATE" \
+    < "$WORK/summary" > "$WORK/intake.out" 2> "$WORK/intake.err" || rc=$?
+  [ "$rc" -eq 0 ] && break
+  if [ "$rc" -eq 255 ]; then
+    [ "$attempt" -lt "$SSH_RETRIES" ] || fail ssh "$(tail -n 3 "$WORK/intake.err")"
+    attempt=$((attempt + 1))
+    sleep "$SSH_BACKOFF"
+    continue
+  fi
+  fail intake "rc=$rc: $(tail -n 3 "$WORK/intake.err")"
+done
+cat "$WORK/intake.out"
+echo "seneca-standup: delivered $DATE (window $WINDOW)"
