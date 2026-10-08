@@ -112,6 +112,19 @@ fails_at skill
 [ ! -e "$T/claude.args" ] || fail "skill-dir: claude ran"
 [ ! -e "$T/ssh.calls" ] || fail "skill-dir: ssh ran"
 
+# a mid-block prompt failure (reading skill.body) must also stop delivery
+reset
+cat > "$T/bin/cat" <<'SHIM'
+#!/bin/bash
+for a in "$@"; do case "$a" in *skill.body) echo "cat: injected failure" >&2; exit 1;; esac; done
+exec /bin/cat "$@"
+SHIM
+chmod 755 "$T/bin/cat"
+PATH="$T/bin:$PATH" run 2026-10-08
+fails_at prompt
+[ ! -e "$T/claude.args" ] || fail "prompt: claude ran"
+[ ! -e "$T/ssh.calls" ] || fail "prompt: ssh ran"
+
 reset; echo 1 > "$T/claude.rc"; run 2026-10-08
 fails_at claude
 [ ! -e "$T/ssh.calls" ] || fail "claude: ssh ran"

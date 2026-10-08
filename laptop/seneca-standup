@@ -47,8 +47,10 @@ rc=0
 cat "$SKILL" > "$WORK/skill.body" 2> "$WORK/skill.err" || rc=$?
 [ "$rc" -eq 0 ] || fail skill "rc=$rc; $(cat "$WORK/skill.err")"
 
-{
-  cat <<EOF
+(
+  set -e
+  {
+    cat <<EOF
 You are running unattended as a scheduled job; nobody will read questions or answer them.
 collect.sh has already run for the window $WINDOW and its output is below — do not run anything.
 Write the standup summary strictly by the rules of the daily-standup skill that follows, under the heading «$HEADING».
@@ -56,10 +58,13 @@ Output only the summary itself: no preamble, no questions, no offers to widen th
 
 ===== daily-standup SKILL.md =====
 EOF
-  cat "$WORK/skill.body"
-  printf '\n===== collect.sh output =====\n'
-  cat "$WORK/collected"
-} > "$WORK/prompt" || fail prompt "cannot write the prompt"
+    cat "$WORK/skill.body"
+    printf '\n===== collect.sh output =====\n'
+    cat "$WORK/collected"
+  } > "$WORK/prompt"
+) 2> "$WORK/prompt.err"
+rc=$?
+[ "$rc" -eq 0 ] || fail prompt "$(cat "$WORK/prompt.err")"
 
 rc=0
 "$CLAUDE" -p --tools "" --strict-mcp-config --no-session-persistence \
