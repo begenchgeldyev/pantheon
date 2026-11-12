@@ -16,12 +16,12 @@ printf '%s\n' "\$@" > "$T/collect.args"
 echo "COLLECTED-DATA"
 exit \$(cat "$T/collect.rc" 2>/dev/null || echo 0)
 STUB
-cat > "$T/bin/claude" <<STUB
+cat > "$T/bin/opencode" <<STUB
 #!/bin/bash
-printf '%s\n' "\$@" > "$T/claude.args"
-cat > "$T/claude.stdin"
+printf '%s\n' "\$@" > "$T/opencode.args"
+cat > "$T/opencode.stdin"
 cat "$T/summary.txt"
-exit \$(cat "$T/claude.rc" 2>/dev/null || echo 0)
+exit \$(cat "$T/opencode.rc" 2>/dev/null || echo 0)
 STUB
 cat > "$T/bin/ssh" <<STUB
 #!/bin/bash
@@ -39,12 +39,15 @@ STUB
 chmod 755 "$T"/bin/*
 printf 'SKILL-RULES-MARKER\n' > "$T/SKILL.md"
 
-export SENECA_COLLECT="$T/bin/collect" SENECA_SKILL="$T/SKILL.md" SENECA_CLAUDE="$T/bin/claude" \
-  SENECA_SSH="$T/bin/ssh" SENECA_NOTIFY="$T/bin/notify" SENECA_HOST=kz-test \
+export SENECA_COLLECT="$T/bin/collect" SENECA_SKILL="$T/SKILL.md" SENECA_OPENCODE="$T/bin/opencode" \
+  SENECA_MODEL=proxy/gpt-6.1-sol SENECA_OPENCODE_TIMEOUT=30 \
+  SENECA_SSH="$T/bin/ssh" SENECA_NOTIFY="$T/bin/notify" SENECA_HOST=server-test \
   SENECA_INTAKE=/srv/intake SENECA_SSH_RETRIES=3 SENECA_SSH_BACKOFF=0
+export SENECA_STATE_DIR="$T/state" SENECA_STATE_HELPER="$HERE/../bin/pantheon-state"
 
 reset() {
-  rm -f "$T"/*.args "$T"/*.rc "$T/collect.stderr" "$T/ssh.calls" "$T/ssh.rcs" "$T/ssh.stdin" "$T/claude.stdin"
+  rm -rf "$T/state"
+  rm -f "$T"/*.args "$T"/*.rc "$T/collect.stderr" "$T/ssh.calls" "$T/ssh.rcs" "$T/ssh.stdin" "$T/opencode.stdin"
   printf '**За последние 24 часа**\n- **rz-web-client** — работа\n' > "$T/summary.txt"
 }
 run() { # $1 the date the job runs for
@@ -56,24 +59,24 @@ reset
 run 2026-10-08
 [ "$RC" -eq 0 ] || fail "thursday rc=$RC: $(cat "$T/err")"
 [ "$(cat "$T/collect.args")" = "1d" ] || fail "thursday window: $(cat "$T/collect.args")"
-[ "$(cat "$T/claude.args")" = "$(printf '%s\n' -p --tools '' --strict-mcp-config --no-session-persistence)" ] \
-  || fail "claude argv: $(tr '\n' '|' < "$T/claude.args")"
-grep -q 'SKILL-RULES-MARKER' "$T/claude.stdin" || fail "the prompt lacks the skill"
-grep -q 'COLLECTED-DATA' "$T/claude.stdin" || fail "the prompt lacks the collected data"
-grep -q '«За последние 24 часа»' "$T/claude.stdin" || fail "the prompt lacks the 1d heading"
-[ "$(cat "$T/ssh.calls")" = "-o BatchMode=yes -o ConnectTimeout=20 kz-test /srv/intake 2026-10-08" ] \
+[ "$(cat "$T/opencode.args")" = "$(printf '%s\n' run --model proxy/gpt-6.1-sol --standalone)" ] \
+  || fail "opencode argv: $(tr '\n' '|' < "$T/opencode.args")"
+grep -q 'SKILL-RULES-MARKER' "$T/opencode.stdin" || fail "the prompt lacks the skill"
+grep -q 'COLLECTED-DATA' "$T/opencode.stdin" || fail "the prompt lacks the collected data"
+grep -q '«За последние 24 часа»' "$T/opencode.stdin" || fail "the prompt lacks the 1d heading"
+[ "$(cat "$T/ssh.calls")" = "-o BatchMode=yes -o ConnectTimeout=20 server-test /srv/intake 2026-10-08" ] \
   || fail "ssh argv: $(cat "$T/ssh.calls")"
 cmp -s "$T/summary.txt" "$T/ssh.stdin" || fail "ssh stdin is not the summary"
 [ ! -e "$T/notify.args" ] || fail "a good run notified: $(cat "$T/notify.args")"
-grep -q 'delivered 2026-10-08' "$T/out" || fail "thursday stdout: $(cat "$T/out")"
+! grep -q 'seneca-standup: delivered' "$T/out" || fail "exit zero must not claim delivery: $(cat "$T/out")"
 
 # --- a Monday reaches back over the weekend to Friday ---
 reset
 run 2026-10-12
 [ "$RC" -eq 0 ] || fail "monday rc=$RC: $(cat "$T/err")"
 [ "$(cat "$T/collect.args")" = "3d" ] || fail "monday window: $(cat "$T/collect.args")"
-grep -q '«За 3 дня»' "$T/claude.stdin" || fail "the prompt lacks the 3d heading"
-grep -q 'kz-test /srv/intake 2026-10-12$' "$T/ssh.calls" || fail "monday ssh argv: $(cat "$T/ssh.calls")"
+grep -q '«За 3 дня»' "$T/opencode.stdin" || fail "the prompt lacks the 3d heading"
+grep -q 'server-test /srv/intake 2026-10-12$' "$T/ssh.calls" || fail "monday ssh argv: $(cat "$T/ssh.calls")"
 
 # --- a failed step stops the run with one notification that names it ---
 fails_at() { # $1 the step the notification must name
@@ -91,7 +94,7 @@ fails_at date
 
 reset; echo 1 > "$T/collect.rc"; run 2026-10-08
 fails_at collect
-[ ! -e "$T/claude.args" ] || fail "collect: claude ran"
+[ ! -e "$T/opencode.args" ] || fail "collect: opencode ran"
 [ ! -e "$T/ssh.calls" ] || fail "collect: ssh ran"
 
 # the full failing stderr reaches the journal — the root cause is not lost
@@ -104,12 +107,12 @@ grep -q 'root cause: no such ref' "$T/err" || fail "collect stderr root cause lo
 
 reset; export SENECA_SKILL="$T/missing.md"; run 2026-10-08; export SENECA_SKILL="$T/SKILL.md"
 fails_at skill
-[ ! -e "$T/claude.args" ] || fail "skill: claude ran"
+[ ! -e "$T/opencode.args" ] || fail "skill: opencode ran"
 
 # a readable path that `cat` cannot actually read (a directory) must stop delivery
 reset; export SENECA_SKILL="$T"; run 2026-10-08; export SENECA_SKILL="$T/SKILL.md"
 fails_at skill
-[ ! -e "$T/claude.args" ] || fail "skill-dir: claude ran"
+[ ! -e "$T/opencode.args" ] || fail "skill-dir: opencode ran"
 [ ! -e "$T/ssh.calls" ] || fail "skill-dir: ssh ran"
 
 # a mid-block prompt failure (reading skill.body) must also stop delivery
@@ -122,12 +125,20 @@ SHIM
 chmod 755 "$T/bin/cat"
 PATH="$T/bin:$PATH" run 2026-10-08
 fails_at prompt
-[ ! -e "$T/claude.args" ] || fail "prompt: claude ran"
+[ ! -e "$T/opencode.args" ] || fail "prompt: opencode ran"
 [ ! -e "$T/ssh.calls" ] || fail "prompt: ssh ran"
 
-reset; echo 1 > "$T/claude.rc"; run 2026-10-08
-fails_at claude
-[ ! -e "$T/ssh.calls" ] || fail "claude: ssh ran"
+reset; echo 1 > "$T/opencode.rc"; run 2026-10-08
+fails_at opencode
+[ ! -e "$T/ssh.calls" ] || fail "opencode: ssh ran"
+
+# opencode reports API errors on stdout: the journal must carry that text, not just rc
+reset; echo 1 > "$T/opencode.rc"
+printf 'API Error: 400 unknown provider for model x\n' > "$T/summary.txt"
+run 2026-10-08
+fails_at opencode
+grep -q 'unknown provider for model x' "$T/err" || fail "opencode stdout lost: $(cat "$T/err")"
+[ ! -e "$T/ssh.calls" ] || fail "opencode stdout: ssh ran"
 
 reset; printf ' \n\n' > "$T/summary.txt"; run 2026-10-08
 fails_at summary
@@ -135,17 +146,69 @@ fails_at summary
 
 reset; printf '255\n255\n255\n' > "$T/ssh.rcs"; run 2026-10-08
 fails_at ssh
-[ "$(wc -l < "$T/ssh.calls")" -eq 3 ] || fail "ssh: $(wc -l < "$T/ssh.calls") attempts, want 3"
+[ "$(wc -l < "$T/ssh.calls")" -eq 1 ] || fail "ssh: ambiguous dispatch must not be retried"
 
 reset; printf '255\n0\n' > "$T/ssh.rcs"; run 2026-10-08
-[ "$RC" -eq 0 ] || fail "ssh retry: rc=$RC"
-[ "$(wc -l < "$T/ssh.calls")" -eq 2 ] || fail "ssh retry: $(wc -l < "$T/ssh.calls") attempts, want 2"
-[ ! -e "$T/notify.args" ] || fail "ssh retry notified"
+[ "$RC" -eq 1 ] || fail "ambiguous ssh: rc=$RC"
+[ "$(wc -l < "$T/ssh.calls")" -eq 1 ] || fail "ambiguous ssh was retried"
+
+# Resume uses the durable summary, not another collection/model turn.
+rm -f "$T/collect.args" "$T/opencode.args"
+SENECA_DATE=2026-10-08 "$JOB" --resume > "$T/out" 2> "$T/err" || fail 'resume failed'
+[ ! -e "$T/collect.args" ] && [ ! -e "$T/opencode.args" ] || fail 'resume regenerated'
+[ "$(wc -l < "$T/ssh.calls")" -eq 2 ] || fail 'resume did not submit once'
+SENECA_DATE=2026-10-08 "$JOB" --status > "$T/status" || fail 'status failed'
+[ "$(wc -l < "$T/ssh.calls")" -eq 2 ] || fail 'status submitted'
+! grep -q 'COLLECTED-DATA\|работа' "$T/status" || fail 'status leaked content'
 
 for rc in 2 6; do
   reset; echo "$rc" > "$T/ssh.rcs"; run 2026-10-08
   fails_at intake
   [ "$(wc -l < "$T/ssh.calls")" -eq 1 ] || fail "intake rc $rc was retried"
 done
+
+# End-to-end mocked SSH loss AFTER remote acceptance, then explicit safe resume.
+reset
+mkdir -p "$T/server/remind-impl" "$T/ws"
+cp "$HERE/../bin/standup-intake" "$HERE/../bin/pantheon-state" "$T/server/"
+cp -r "$HERE/../bin/pantheon_ops" "$T/server/"
+cp "$HERE/../bin/remind-impl/remind-lib" "$T/server/remind-impl/"
+sed -i "s|^export PATH=.*|export PATH=$T/bin:/usr/bin:/bin|" "$T/server/remind-impl/remind-lib"
+printf '777\n' > "$T/server/remind-impl/owner-chat"
+cat > "$T/bin/openclaw" <<STUB
+#!/bin/bash
+echo native >> "$T/native.calls"
+echo '{"status":"accepted","runId":"accepted-before-ssh-loss"}'
+STUB
+cat > "$T/bin/ssh" <<STUB
+#!/bin/bash
+shift 6
+"$T/server/standup-intake" "\$@"
+rc=\$?
+if [ ! -f "$T/ssh-lost" ]; then touch "$T/ssh-lost"; exit 255; fi
+exit "\$rc"
+STUB
+chmod 755 "$T/bin/openclaw" "$T/bin/ssh"
+export PANTHEON_STATE_DIR="$T/server-state" PANTHEON_WORKSPACE="$T/ws" PANTHEON_OPENCLAW_USER=pantheon_test_no_user
+run 2026-10-19
+[ "$RC" -eq 1 ] || fail 'SSH loss was reported as success'
+[ "$(wc -l < "$T/native.calls")" -eq 1 ] || fail 'initial dispatch count'
+rm -f "$T/collect.args" "$T/opencode.args"
+SENECA_DATE=2026-10-19 "$JOB" --resume > "$T/out" 2> "$T/err" || fail 'safe resume failed'
+[ "$(wc -l < "$T/native.calls")" -eq 1 ] || fail 'SSH loss/resume invoked agent twice'
+[ ! -f "$T/collect.args" ] && [ ! -f "$T/opencode.args" ] || fail 'safe resume recollected'
+grep -q accepted-before-ssh-loss "$T/server-state/standups/2026-10-19/state.json" || fail 'lost native run'
+
+# Default logical date explicitly asks for Tomsk, even on a different host TZ.
+cat > "$T/bin/date" <<STUB
+#!/bin/bash
+if [ "\$*" = '+%F' ]; then
+  printf '%s' "\$TZ" > "$T/date.tz"
+  echo 2026-10-20
+else exec /usr/bin/date "\$@"; fi
+STUB
+chmod 755 "$T/bin/date"
+PATH="$T/bin:$PATH" TZ=UTC "$JOB" --status > "$T/date.status" || fail 'default date status'
+[ "$(cat "$T/date.tz")" = Asia/Tomsk ] || fail 'default date did not use Tomsk'
 
 echo "OK"

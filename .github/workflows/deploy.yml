@@ -10,7 +10,34 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.14'
+      - name: Ensure existing reminder fixture prerequisites (hosted runner only)
+        run: |
+          if ! command -v jq >/dev/null || ! command -v column >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y jq bsdextrautils
+          fi
+      - name: Local fixtures only (no native runtime or activation)
+        run: |
+          mkdir -p /tmp/opencode
+          export TMPDIR=/tmp/opencode PYTHONDONTWRITEBYTECODE=1
+          python3 -m unittest discover -s bin/pantheon_ops -p '*_test.py'
+          bun test plugins/pantheon-message-guard
+          bash bin/remind.test.sh
+          bash bin/standup-intake.test.sh
+          bash laptop/seneca-standup.test.sh
+          bash bin/install-pantheon-helpers.test.sh
+          for f in bin/install-pantheon-helpers bin/install-pantheon-helpers.test.sh bin/standup-intake laptop/seneca-standup; do bash -n "$f"; done
+          git diff --check
+
   deploy:
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - name: Set up ssh
@@ -28,12 +55,14 @@ jobs:
            cd /opt/pantheon
            git fetch origin main
            git reset --hard origin/main
-           bash bin/remind.test.sh
-           bash bin/standup-intake.test.sh
+            export TMPDIR=/tmp/opencode PYTHONDONTWRITEBYTECODE=1
+            mkdir -p "$TMPDIR"
+            bash bin/remind.test.sh
+            bash bin/standup-intake.test.sh
+            python3 -m unittest discover -s bin/pantheon_ops -p "*_test.py"
+            bash laptop/seneca-standup.test.sh
+            bash bin/install-pantheon-helpers.test.sh
            # OpenClaw polls the bot token now; a second poller (the old container) breaks it.
            docker rm -f pantheon >/dev/null 2>&1 || true
-           install -d -m 755 /home/openclaw/bin/remind-impl
-           for f in remind remind-in remind-cron remind-list remind-rm; do install -m 755 "bin/remind-impl/$f" /home/openclaw/bin/remind-impl/; done
-           install -m 644 bin/remind-impl/remind-lib /home/openclaw/bin/remind-impl/
-           install -m 755 bin/install-remind-wrappers /home/openclaw/bin/
-           install -m 755 bin/standup-intake /home/openclaw/bin/'
+            # Passive copy only: no baseline, daemon reload, enable, plugin install or sends.
+            bash bin/install-pantheon-helpers server /home/openclaw/bin /home/openclaw/.config/systemd/user'

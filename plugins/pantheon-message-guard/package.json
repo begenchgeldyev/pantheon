@@ -1,0 +1,11 @@
+{
+  "name": "pantheon-message-guard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "install": { "minHostVersion": ">=2026.10.10" },
+    "compat": { "pluginApi": ">=2026.10.10" }
+  }
+}

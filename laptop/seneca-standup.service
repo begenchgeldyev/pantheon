@@ -3,4 +3,5 @@ Description=Seneca: send the morning standup to the server
 
 [Service]
 Type=oneshot
+Environment=PATH=%h/.opencode/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/seneca-standup

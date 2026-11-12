@@ -1,0 +1,58 @@
+#!/bin/bash
+# Passive production-file copy only. All destinations must be explicit.
+set -euo pipefail
+usage() { echo 'usage: install-pantheon-helpers server|laptop ABS_BIN_DIR ABS_USER_UNIT_DIR | plugin ABS_PACKAGE_DIR' >&2; exit 2; }
+[ "$#" -ge 2 ] || usage
+MODE="$1"; DEST="$2"; UNITS="${3:-}"
+ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+EXEC=(); MODULES=(); DATA=(); UNIT_FILES=()
+case "$MODE" in
+  server)
+    [ "$#" -eq 3 ] || usage
+    EXEC=(bin/install-remind-wrappers bin/standup-intake bin/pantheon-state bin/pantheon-status bin/pantheon-check)
+    for f in remind remind-in remind-cron remind-list remind-rm; do EXEC+=("bin/remind-impl/$f"); done
+    MODULES=(__init__.py state.py native.py monitor.py)
+    DATA=(bin/remind-impl/remind-lib)
+    UNIT_FILES=(server/pantheon-check.service server/pantheon-check.timer)
+    ;;
+  laptop)
+    [ "$#" -eq 3 ] || usage
+    EXEC=(bin/pantheon-state laptop/seneca-standup)
+    MODULES=(__init__.py state.py)
+    UNIT_FILES=(laptop/seneca-standup.service laptop/seneca-standup.timer)
+    ;;
+  plugin)
+    [ "$#" -eq 2 ] || usage
+    DATA=(plugins/pantheon-message-guard/index.ts plugins/pantheon-message-guard/validator.ts
+          plugins/pantheon-message-guard/package.json plugins/pantheon-message-guard/openclaw.plugin.json
+          plugins/pantheon-message-guard/README.md)
+    ;;
+  *) usage;;
+esac
+[[ "$DEST" = /* && ( -z "$UNITS" || "$UNITS" = /* ) ]] || usage
+# Validate the entire selected source set before creating any destination.
+INPUTS=("${EXEC[@]}" "${DATA[@]}" "${UNIT_FILES[@]}")
+for f in "${MODULES[@]}"; do INPUTS+=("bin/pantheon_ops/$f"); done
+for f in "${INPUTS[@]}"; do
+  [ -f "$ROOT/$f" ] && [ -r "$ROOT/$f" ] || { echo "install-pantheon-helpers: missing input: $f" >&2; exit 2; }
+done
+install -d -m 755 "$DEST"
+for f in "${EXEC[@]}" "${DATA[@]}"; do
+  case "$f" in
+    bin/remind-impl/*) target="$DEST/remind-impl/$(basename "$f")";;
+    *) target="$DEST/$(basename "$f")";;
+  esac
+  install -d -m 755 "$(dirname "$target")"
+  mode=644
+  for e in "${EXEC[@]}"; do [ "$f" != "$e" ] || mode=755; done
+  install -m "$mode" "$ROOT/$f" "$target"
+done
+if [ "${#MODULES[@]}" -gt 0 ]; then
+  install -d -m 755 "$DEST/pantheon_ops"
+  for f in "${MODULES[@]}"; do install -m 644 "$ROOT/bin/pantheon_ops/$f" "$DEST/pantheon_ops/$f"; done
+fi
+if [ -n "$UNITS" ]; then
+  install -d -m 755 "$UNITS"
+  for f in "${UNIT_FILES[@]}"; do install -m 644 "$ROOT/$f" "$UNITS/$(basename "$f")"; done
+fi
+printf 'Copied passive %s files to %s; no activation performed.\n' "$MODE" "$DEST"

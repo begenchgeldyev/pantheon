@@ -1,0 +1,18 @@
+[Unit]
+Description=Pantheon bounded owner-alert checker (non-model)
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/openclaw/.openclaw/tools/node/bin:/home/openclaw/.local/bin:/home/openclaw/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PANTHEON_STATE_DIR=/home/openclaw/.local/state/pantheon
+Environment=PANTHEON_WORKSPACE=/home/openclaw/.openclaw/workspace-seneca
+Environment=PANTHEON_OWNER_CHAT_FILE=/home/openclaw/bin/remind-impl/owner-chat
+Environment=PANTHEON_NATIVE_EXECUTABLE=/home/openclaw/.openclaw/tools/node/bin/openclaw
+EnvironmentFile=-%h/.config/pantheon/monitor.env
+ExecStart=/home/openclaw/bin/pantheon-check --json
+UMask=0077
+TimeoutStartSec=180
+
+[Install]
+WantedBy=default.target

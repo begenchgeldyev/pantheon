@@ -1,8 +1,8 @@
 [Unit]
-Description=Seneca: the morning standup on weekdays at 09:30
+Description=Seneca: the morning standup on weekdays at 07:00 Tomsk time
 
 [Timer]
-OnCalendar=Mon..Fri *-*-* 09:30:00
+OnCalendar=Mon..Fri *-*-* 07:00:00 Asia/Tomsk
 Persistent=true
 Unit=seneca-standup.service
 

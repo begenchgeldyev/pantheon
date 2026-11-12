@@ -1,0 +1,10 @@
+{
+  "id": "pantheon-message-guard",
+  "name": "Pantheon Message Guard",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
