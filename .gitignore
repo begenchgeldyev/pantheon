@@ -1,14 +1,13 @@
-# dependencies (bun install)
 node_modules
 
-# output
 out
 dist
 *.tgz
 
-# code coverage
 coverage
 *.lcov
+.omo/
+.slim/
 
 # logs
 logs
