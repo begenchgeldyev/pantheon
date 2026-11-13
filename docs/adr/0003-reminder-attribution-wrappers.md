@@ -1,0 +1,3 @@
+# Reminder attribution through per-agent wrappers and an exec allowlist
+
+Each agent execs its own `remind*` wrapper whose path has the agent id baked in; the real `bin/remind-impl/remind*` takes the agent id as its first argument, and the per-agent exec allowlist names only that agent's own wrappers, so an agent can schedule, list and cancel its own reminders and nothing else (`README.md:167-175`, `bin/install-remind-wrappers:6-14`). The rejected alternative was passing the agent id as an argument or inferring it from the working directory or environment: OpenClaw's exec tool honours a caller-supplied `workdir` and agents may pass env overrides, so both are forgeable by the agent itself. The allowlist is the only primitive the agent cannot rewrite.
