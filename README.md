@@ -45,6 +45,8 @@ agent bound to their own chat (see [Adding a user](#adding-a-user)).
 
 | Path | What it is |
 |---|---|
+| `GLOSSARY.md` | Household vocabulary — the canonical names for gods, hand-offs, standup, monitor and state. |
+| `docs/adr/` | One-paragraph records of decisions that are hard to reverse, with the rejected alternative named. |
 | `gods/<id>/` | Active Zeus/Seneca templates and parked Athena/Heracles/Aphrodite templates (`{{NAME}}`, `{{USERNAME}}`, `{{REMIND_BIN}}`, `{{CHAT_ID}}`); Hermes is configured as `main`, with no dedicated `gods/main/` here. |
 | `workspace-template/` | Persona template for a non-owner user's own agent (Hermes-style). |
 | `bin/remind-impl/` | The real `remind*` helpers; they take the agent id as their first argument. |
@@ -58,6 +60,8 @@ agent bound to their own chat (see [Adding a user](#adding-a-user)).
 | `server/` | Passive monitor user service/timer templates, not enabled by installation. |
 | `laptop/` | The laptop half of the standup: `seneca-standup`, its systemd user units, its tests. |
 | `.github/workflows/deploy.yml` | Deploys the helpers to the server on push to `main`. |
+
+The vocabulary used below is defined in [GLOSSARY.md](GLOSSARY.md); decisions that would surprise a reader are recorded in [docs/adr/](docs/adr/).
 
 ## Setup
 

@@ -1,0 +1,3 @@
+# Zeus is the only door, and the specialist answers the owner directly
+
+Only Zeus is bound to the owner's chat; when he hands work to Hermes or Seneca he submits it with `sessions_send`, ends his own turn silently (`NO_REPLY`), and the specialist sends the answer with the `message` tool under its own Telegram route (`README.md:127-132`). The rejected alternative was for Zeus to relay every specialist answer back to the owner: it costs a second model turn per reply, doubles the chance of a paraphrase, and makes Zeus the bottleneck for text he did not write. The cost that remains is one model turn on each side per specialist reply.
