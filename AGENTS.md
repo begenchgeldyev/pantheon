@@ -27,6 +27,14 @@ Tests may not touch the native runtime, may not enable units, and may not send a
 `jq` and `column` (util-linux) are prerequisites.
 Bun is used only for the guard plugin tests — the Python helpers and shell scripts are the actual product.
 
+## Browser checks
+
+- When browser interaction helps answer or verify a website question, use the globally installed `agent-browser` rather than asking the human to inspect it.
+- Before browser commands, load the installed agent-browser skill or run `agent-browser skills get core` and read its instructions.
+- Own an isolated, explicitly named session: generate a name with `agent-browser session id --scope worktree --prefix task`, then pass `--session <name>` on every browser command. Never reuse another agent's session; close only your own session afterward with `agent-browser --session <name> close`.
+- Use snapshots, DOM inspection and clicks as appropriate to the question; DOM questions do not require screenshots. Browser checks supplement, not replace, normal tests.
+- The test restrictions above and the rules below also apply to browser checks: do not touch the native runtime, enable units, send anything, activate installations or mutate live workspaces.
+
 ## Rules
 
 - Never copy a file from `gods/` or `workspace-template/` over a live workspace, and never edit a live workspace as a side effect of repo work. Personas are rendered by hand; agents mutate their own workspaces.
