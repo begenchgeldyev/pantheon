@@ -1,0 +1,20 @@
+{
+  "node": {
+    "version": "24.21.0",
+    "file": "node-v24.21.0-linux-x64.tar.xz",
+    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
+    "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+  },
+  "openclaw": {
+    "version": "2026.10.10",
+    "file": "openclaw-2026.10.10.tgz",
+    "url": "https://registry.npmjs.org/openclaw/-/openclaw-2026.10.10.tgz",
+    "sha256": "e811c18281812a409e29a681ada7faf7100560020e144fbdf18889fab2c7cf06"
+  },
+  "proxy": {
+    "version": "8.0.41",
+    "file": "CLIProxyAPI_8.0.41_linux_amd64.tar.gz",
+    "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.41/CLIProxyAPI_8.0.41_linux_amd64.tar.gz",
+    "sha256": "99b9ca69753b2fa16290edecae4d19011299ecd7bfbad17a411b5470288d8b4a"
+  }
+}

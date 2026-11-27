@@ -1,0 +1,17 @@
+config-version: 8
+server:
+  host: "127.0.0.1"
+  port: 8317
+  discovery:
+    enabled: false
+management:
+  allow-remote: false
+  secret-key: ""
+  disable-control-panel: true
+access:
+  # Replace this marker with a unique key from the secret store before starting.
+  api-keys: ["REPLACE_BEFORE_START"]
+oauth:
+  auth-dir: "/var/lib/cliproxyapi/oauth"
+# Add the reviewed Anthropic Messages and OpenAI Responses provider mappings
+# and upstream test credentials to the private installed configuration only.

@@ -59,7 +59,8 @@ agent bound to their own chat (see [Adding a user](#adding-a-user)).
 | `bin/install-pantheon-helpers` | Explicit-destination passive server/laptop/plugin packaging; isolated fixture in `bin/install-pantheon-helpers.test.sh`. |
 | `server/` | Passive monitor user service/timer templates, not enabled by installation. |
 | `laptop/` | The laptop half of the standup: `seneca-standup`, its systemd user units, its tests. |
-| `.github/workflows/deploy.yml` | Deploys the helpers to the server on push to `main`. |
+| `deploy/` | Pinned runtime, passive service templates, and private backup/restore tooling. |
+| `.github/workflows/checks.yml` | Runs isolated fixtures without deployment credentials. |
 
 The vocabulary used below is defined in [GLOSSARY.md](GLOSSARY.md); decisions that would surprise a reader are recorded in [docs/adr/](docs/adr/).
 
@@ -322,12 +323,14 @@ rm -f ~/.openclaw/workspace-$A/BOOTSTRAP.md
 5. Only then add `"<ID>"` to `channels.telegram.allowFrom`. An allowed user without
    a binding would reach the default agent — Hermes, the owner's own.
 
-## Deploy
+## Deployment and recovery
 
-A push to `main` runs `.github/workflows/deploy.yml`: hosted Python/Bun/Bash
-fixtures and shell checks, then existing SSH checkout/deploy as `openclaw` in
-`/opt/pantheon`, local stub suites and removal of the retired container (which must
-never poll again). `install-pantheon-helpers server /home/openclaw/bin
+Use the [OpenClaw recovery runbook](docs/openclaw-recovery.md) to stage a pinned
+runtime, verify private backups, and rehearse restoration without starting
+production channels or jobs. GitHub Actions only runs tests. The retired bot
+must never resume polling; its last revision is preserved at `pantheon-legacy`.
+
+`install-pantheon-helpers server /home/openclaw/bin
 /home/openclaw/.config/systemd/user` copies only these production files:
 
 - executables (0755): `standup-intake`, `pantheon-state`, `pantheon-status`,
@@ -524,15 +527,11 @@ journalctl --user -u openclaw-gateway -f
   policy above) cannot read files outside its workspace.
 - OpenClaw does not echo a voice note's transcript back to the chat.
 
-## Rollback to the old bot
+## Rollback
 
-Backups of the cutover are in `~/pantheon-migration-backup-20261006-104233`
-(`openclaw.json`, `~/bin`, persona files, cron and approvals JSON). Restore
-`openclaw.json` (removes `channels.telegram`) and `openclaw gateway restart`;
-restore `~/bin` and the persona files; then
-`cd /opt/pantheon && git checkout pantheon-last-container && docker compose up -d --build`.
-The two weekly reminders would need their old `/notify` payload back (see
-`cron.json` in the backup).
+Use the [recovery runbook](docs/openclaw-recovery.md#4-repository-transition-and-later-cutover)
+to return to the original OpenClaw instance. `pantheon-legacy` preserves the
+old bot for reference only; do not start it or restore its workflow.
 
 ## Gods
 
