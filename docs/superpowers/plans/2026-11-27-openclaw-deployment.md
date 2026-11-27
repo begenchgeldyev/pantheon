@@ -39,11 +39,12 @@
 ## Task 3: CI and handoff
 
 - [x] Retain the current repository checks, add deployment fixtures, and remove automatic SSH deployment from the branch.
-- [ ] Verify both suites, finalize the runbook, and review the branch before any publication.
+- [x] Verify both suites, finalize the runbook, and review the branch before publication. Review follow-ups cover restic's incomplete snapshot behavior and user-service reboot recovery.
 
 ## External gates
 
-- [ ] Disable and drain the GitHub legacy workflow; preserve the last bot commit under the annotated `pantheon-legacy` tag.
+- [x] Disable the GitHub legacy workflow and verify all runs are terminal.
+- [x] Mark `7909594084fa0e7a80c71461df5dc1690af27332`, the last bot commit, with the annotated `pantheon-legacy` tag.
 - [ ] Capture production state consistently; send it to the approved encrypted off-host vault. Prove daily freshness, retention and operator alerts.
 - [ ] Privately verify both proxy mappings and the reviewed custom dependency set; restore and rehearse on a fresh host with scoped test identities and no production egress.
 - [ ] Authorize any subsequent production activation separately.

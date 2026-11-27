@@ -44,10 +44,16 @@ def backup(capture: Path, stream: str, captured_at: datetime) -> None:
     if captured_at.utcoffset() is None or captured_at > datetime.now(UTC):
         raise ValueError("capture time must have a timezone and must not be in the future")
     check_capture(capture)
-    restic("backup", "--quiet", "--tag", stream_tag(stream),
-           "--time", captured_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S"), "--exclude", "*.sqlite-shm",
-           "--exclude", "*.sqlite3-shm", "--exclude", "*.db-shm", "state", "manifest.json",
-           cwd=capture)
+    tag = stream_tag(stream)
+    output = restic("backup", "--json", "--tag", tag + ":pending",
+                    "--time", captured_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+                    "--exclude", "*.sqlite-shm", "--exclude", "*.sqlite3-shm", "--exclude", "*.db-shm",
+                    "state", "manifest.json", cwd=capture)
+    events = (json.loads(line) for line in output.splitlines())
+    ids = [event.get("snapshot_id", "") for event in events if event["message_type"] == "summary"]
+    if len(ids) != 1 or not re.fullmatch(r"[0-9a-f]{8,64}", ids[0]):
+        raise ValueError("restic did not confirm a completed snapshot")
+    restic("tag", "--set", tag, ids[0])
 
 
 def snapshots(stream: str) -> list[dict]:

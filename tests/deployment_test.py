@@ -150,6 +150,19 @@ class BackupTest(RecoveryFixture):
         backup(source, "unit-test", old_capture)
         with self.assertRaisesRegex(ValueError, "last 24 hours"):
             check_freshness("unit-test")
+        real_run = subprocess.run
+
+        def saved_incomplete_snapshot(argv, **kwargs):
+            result = real_run(argv, **kwargs)
+            if argv[:2] == ["restic", "backup"] and result.returncode == 0:
+                result.returncode = 3  # Restic can save a snapshot even when reading a source fails.
+            return result
+
+        with patch("backup.subprocess.run", side_effect=saved_incomplete_snapshot):
+            with self.assertRaisesRegex(ValueError, "exit 3"):
+                backup(source, "unit-test", datetime.now(UTC))
+        with self.assertRaisesRegex(ValueError, "last 24 hours"):
+            check_freshness("unit-test")
         backup(source, "fresh-test", datetime.now(UTC))
         check_freshness("fresh-test")
         self.assertEqual(retain("unit-test", dry_run=True), 0)
