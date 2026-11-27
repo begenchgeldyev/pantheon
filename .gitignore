@@ -40,3 +40,10 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Pantheon runtime data (users.sqlite)
 data/
+
+# OpenClaw recovery data and Python bytecode
+.openclaw/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+__pycache__/

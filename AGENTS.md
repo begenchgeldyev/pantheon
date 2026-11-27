@@ -2,17 +2,19 @@
 
 ## What this repository is
 
-This repository holds what OpenClaw does not ship: the gods' persona templates
+This repository packages a passive OpenClaw runtime and recovery tooling (`deploy/`),
+plus the gods' persona templates
 (`gods/`), the non-owner persona template (`workspace-template/`), the reminder and
 standup helpers plus their tests (`bin/`), the reliability checker and status tooling
 (`bin/pantheon_ops`), the message-guard plugin, and the laptop half of the standup
-(`laptop/`). It is not a service, and it is not deployed except by
-`.github/workflows/deploy.yml`. Live agent workspaces live outside the repository.
+(`laptop/`). CI runs fixtures only. Live agent workspaces live outside the repository.
+Read `docs/openclaw-recovery.md` before packaging, restoring or rehearsing OpenClaw.
 
 ## Commands
 
 ```bash
 export TMPDIR=/tmp/opencode PYTHONDONTWRITEBYTECODE=1
+python3 -m unittest discover -s tests -p '*_test.py'
 python3 -m unittest discover -s bin/pantheon_ops -p '*_test.py'
 bun test plugins/pantheon-message-guard
 bash bin/remind.test.sh
@@ -25,6 +27,7 @@ git diff --check
 
 Tests may not touch the native runtime, may not enable units, and may not send anything.
 `jq` and `column` (util-linux) are prerequisites.
+The encrypted backup fixture also requires `restic`.
 Bun is used only for the guard plugin tests — the Python helpers and shell scripts are the actual product.
 
 ## Rules

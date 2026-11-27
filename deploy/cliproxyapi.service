@@ -1,0 +1,23 @@
+[Unit]
+Description=CLIProxyAPI model backend (Pantheon)
+After=network.target
+
+[Service]
+Type=simple
+User=cliproxyapi
+Group=cliproxyapi
+StateDirectory=cliproxyapi
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/cliproxyapi
+Environment=HOME=/var/lib/cliproxyapi
+ExecStart=/opt/pantheon/runtime/proxy/cli-proxy-api -local-model -config /etc/pantheon/cliproxyapi.yaml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

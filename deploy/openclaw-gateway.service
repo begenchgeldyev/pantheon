@@ -1,0 +1,24 @@
+[Unit]
+Description=OpenClaw Gateway (Pantheon)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+Environment=PATH=/opt/pantheon/runtime/node/bin:/usr/local/bin:/usr/bin:/bin
+Environment=OPENCLAW_NO_AUTO_UPDATE=1
+Environment=OPENCLAW_DISABLE_BONJOUR=1
+Environment=OPENCLAW_SKIP_CHANNELS=1
+Environment=OPENCLAW_SKIP_CRON=1
+Environment=OPENCLAW_SKIP_GMAIL_WATCHER=1
+EnvironmentFile=%h/.config/pantheon/rehearsal.env
+ExecStart=/opt/pantheon/runtime/node/bin/openclaw gateway --bind loopback --port 18789
+Restart=always
+RestartSec=5
+KillMode=mixed
+MemoryHigh=1300M
+MemoryMax=1500M
+UMask=0077
+
+[Install]
+WantedBy=default.target

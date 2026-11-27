@@ -117,9 +117,13 @@ _Avoid_: deploy, provision, setup
 `pantheon-message-guard`, the `before_tool_call` blocker that refuses a call with a fixed reason. It never rewrites arguments and never logs payloads.
 _Avoid_: filter, sanitizer, middleware, proxy
 
+**Recovery capture**:
+A stable copy of required private state and its matching private manifest, prepared before encryption. It is not a copy of files being written on a running instance.
+_Avoid_: live copy, credential store
+
 ## Naming hazards
 
-- `main` is the agent id of Hermes, not the git branch; the deploy workflow also fires on a branch named `main`. Say which one you mean.
+- `main` is the agent id of Hermes, not the git branch. Say which one you mean.
 - `workspace-template/` is the persona for a *non-owner* user's agent, not Hermes and not the owner's live workspace. Its current header still says Hermes (issue #3).
 - `god` is the household role, even though `gods/seneca/IDENTITY.md` calls Seneca mortal; the directory marks the role, not a claim of divinity (issue #4).
 - `submitted` (a stage) and `sent` (a delivery status) are different receipts; neither proves the owner read anything.
